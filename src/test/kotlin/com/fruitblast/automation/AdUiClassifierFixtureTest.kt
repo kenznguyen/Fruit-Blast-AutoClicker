@@ -134,5 +134,5 @@ internal fun runAdUiFixtureTests() {
     }.isFailure
     check(doctypeRejected) { "Fixture parser must reject DOCTYPE declarations." }
 
-    println("PASS: 15 offline AdUiClassifier fixture/parser assertions")
+    println("PASS: 16 offline AdUiClassifier fixture/parser assertions")
 }
