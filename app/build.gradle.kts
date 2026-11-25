@@ -2,6 +2,10 @@ plugins {
     id("com.android.application") version "9.3.1"
 }
 
+repositories {
+    mavenCentral()
+}
+
 android {
     namespace = "com.fruitblast.autoclicker"
     compileSdk = 37
