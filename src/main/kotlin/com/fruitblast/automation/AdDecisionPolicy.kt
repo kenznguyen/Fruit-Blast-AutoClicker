@@ -1,0 +1,63 @@
+package com.fruitblast.automation
+
+/**
+ * One immutable observation from a single captured frame.
+ *
+ * Visual flags must be produced by a detector that has already validated the frame.
+ * A null foreground package means the foreground application is not known.
+ */
+data class AdObservation(
+    val foregroundPackage: String?,
+    val closeVisible: Boolean = false,
+    val nextVisible: Boolean = false,
+    val continueVisible: Boolean = false,
+    val adPlaying: Boolean = false,
+    val adCompleted: Boolean = false,
+    val gameHomeVisible: Boolean = false,
+)
+
+enum class AdAction {
+    CLOSE,
+    NEXT,
+    CONTINUE,
+    RECOVER_WRONG_APP,
+    WAIT,
+    STOP,
+}
+
+/**
+ * Pure fail-closed decision policy. It never performs Android input itself.
+ *
+ * Safety precedence:
+ * 1. Unknown foreground -> WAIT.
+ * 2. Wrong foreground app -> RECOVER_WRONG_APP.
+ * 3. Completion or game home -> STOP.
+ * 4. Close, then Next, then Continue.
+ * 5. Otherwise WAIT.
+ */
+class AdDecisionPolicy(
+    private val targetPackage: String,
+) {
+    init {
+        require(targetPackage.isNotBlank()) { "targetPackage must not be blank" }
+    }
+
+    fun decide(observation: AdObservation): AdAction {
+        val foregroundPackage = observation.foregroundPackage ?: return AdAction.WAIT
+
+        if (foregroundPackage != targetPackage) {
+            return AdAction.RECOVER_WRONG_APP
+        }
+
+        if (observation.gameHomeVisible || observation.adCompleted) {
+            return AdAction.STOP
+        }
+
+        return when {
+            observation.closeVisible -> AdAction.CLOSE
+            observation.nextVisible -> AdAction.NEXT
+            observation.continueVisible -> AdAction.CONTINUE
+            else -> AdAction.WAIT
+        }
+    }
+}
