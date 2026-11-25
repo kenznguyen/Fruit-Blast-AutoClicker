@@ -16,6 +16,7 @@ import com.fruitblast.automation.FruitBlastConfig
  */
 class FruitBlastAccessibilityService : AccessibilityService() {
     private val foregroundValidator = ForegroundAppValidator()
+    private val nodeObserver = AccessibilityNodeObserver()
 
     @Volatile
     private var lastWindowEventPackage: String? = null
@@ -28,7 +29,13 @@ class FruitBlastAccessibilityService : AccessibilityService() {
                 lastWindowEventPackage = packageName
 
                 if (packageName == FruitBlastConfig.TARGET_PACKAGE) {
-                    Log.i(TAG, "eventType=${event.eventType}, targetPackage=$packageName")
+                    val observation = nodeObserver.observeAndRelease(rootInActiveWindow)
+                    Log.i(
+                        TAG,
+                        "eventType=${event.eventType}, targetPackage=$packageName, " +
+                            "uiState=${observation.state}, close=${observation.closeVisible}, " +
+                            "next=${observation.nextVisible}, continue=${observation.continueVisible}",
+                    )
                 }
             }
         }

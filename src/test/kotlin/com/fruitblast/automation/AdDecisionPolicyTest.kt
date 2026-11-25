@@ -67,5 +67,83 @@ fun main() {
         "Blank foreground package must remain unknown."
     }
 
-    println("PASS: 16 ad policy and foreground validation assertions")
+
+    fun node(
+        className: String = "android.view.View",
+        id: String? = null,
+        text: String? = null,
+        description: String? = null,
+        clickable: Boolean = false,
+        enabled: Boolean = true,
+        visible: Boolean = true,
+        width: Int = 100,
+        height: Int = 100,
+        packageName: String = FruitBlastConfig.TARGET_PACKAGE,
+    ) = AccessibilityNodeSnapshot(
+        packageName, className, id, text, description, visible, enabled,
+        clickable, width, height,
+    )
+
+    val classifier = AdUiClassifier()
+    val gameHomeNodes = listOf(
+        node(description = "Game view", width = 1080, height = 2272),
+        node(className = "android.widget.ImageView", description = "Piggy Bank", clickable = true),
+    )
+    check(classifier.classify(gameHomeNodes).state == AdUiState.GAME_HOME_CANDIDATE) {
+        "Game Home requires both observed Game view and Piggy Bank anchors."
+    }
+
+    val playableNodes = listOf(
+        node(className = "android.webkit.WebView", width = 1080, height = 2188),
+        node(id = "playable", width = 1080, height = 2188),
+        node(id = "stage", width = 1078, height = 2188),
+        node(id = "banner", width = 1078, height = 209),
+    )
+    check(classifier.classify(playableNodes).state == AdUiState.PLAYABLE_AD_CANDIDATE) {
+        "WebView, playable and stage markers identify a playable-ad candidate."
+    }
+
+    val resultNodes = playableNodes + listOf(
+        node(id = "overlay", width = 1078, height = 2188),
+        node(className = "android.widget.Button", id = "cta", description = "PLAY NOW", clickable = true),
+    )
+    val result = classifier.classify(resultNodes)
+    check(result.state == AdUiState.PLAYABLE_AD_RESULT_CANDIDATE) {
+        "Overlay plus the observed PLAY NOW CTA identifies an ad-result candidate."
+    }
+    check(!result.continueVisible) {
+        "PLAY NOW is an advertising CTA, not a Continue signal."
+    }
+
+    val controls = playableNodes + listOf(
+        node(className = "android.widget.Button", id = "close_button", description = "Close", clickable = true),
+        node(className = "android.widget.Button", id = "next", text = "Next", clickable = true),
+        node(className = "android.widget.Button", id = "continue", text = "Continue", clickable = true),
+    )
+    val controlSignals = classifier.classify(controls)
+    check(controlSignals.closeVisible && controlSignals.nextVisible && controlSignals.continueVisible) {
+        "Explicit visible, enabled, clickable controls are surfaced independently."
+    }
+
+    check(classifier.classify(emptyList()).state == AdUiState.UNKNOWN) {
+        "An empty accessibility tree must fail closed."
+    }
+    check(classifier.classify(gameHomeNodes + playableNodes).state == AdUiState.UNKNOWN) {
+        "Conflicting Game Home and playable-ad markers must fail closed."
+    }
+    check(!classifier.classify(playableNodes + node(description = "Close", clickable = true, visible = false)).closeVisible) {
+        "Hidden controls must not be reported."
+    }
+    check(!classifier.classify(playableNodes + node(description = "Close", clickable = false)).closeVisible) {
+        "Non-clickable labels must not be reported as actionable controls."
+    }
+    check(!classifier.classify(playableNodes + node(id = "close", description = "Close", clickable = true, width = 0)).closeVisible) {
+        "Nodes without visible bounds must not be reported."
+    }
+    check(classifier.classify(playableNodes + node(description = "Close", clickable = true, packageName = "com.android.vending")).state == AdUiState.UNKNOWN) {
+        "Mixed-package node trees must fail closed."
+    }
+
+    println("PASS: 16 ad policy/foreground and 11 UI classifier assertions")
+
 }
