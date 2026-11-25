@@ -6,10 +6,10 @@ package com.fruitblast.automation
  * Run with: gradle verifyPolicy
  */
 fun main() {
-    val policy = AdDecisionPolicy(targetPackage = "com.fruitblast.game")
+    val policy = AdDecisionPolicy(targetPackage = "com.funnyvideo.cgame.fruitblast")
 
     fun decision(
-        packageName: String? = "com.fruitblast.game",
+        packageName: String? = "com.funnyvideo.cgame.fruitblast",
         close: Boolean = false,
         next: Boolean = false,
         continueAd: Boolean = false,
@@ -48,5 +48,24 @@ fun main() {
         "Wrong-app detection must take precedence over visual controls."
     }
 
-    println("PASS: 11 ad decision policy assertions")
+
+    // Foreground validation must use the package ID confirmed by the supplied ADB log.
+    val foregroundValidator = ForegroundAppValidator(FruitBlastConfig.TARGET_PACKAGE)
+    check(foregroundValidator.classify("com.funnyvideo.cgame.fruitblast") == ForegroundStatus.TARGET) {
+        "Fruit Blast package must be accepted as the target."
+    }
+    check(foregroundValidator.classify("com.android.vending") == ForegroundStatus.OTHER) {
+        "Play Store must be rejected as a non-target foreground app."
+    }
+    check(foregroundValidator.classify("com.android.chrome") == ForegroundStatus.OTHER) {
+        "Browser must be rejected as a non-target foreground app."
+    }
+    check(foregroundValidator.classify(null) == ForegroundStatus.UNKNOWN) {
+        "Missing foreground package must remain unknown."
+    }
+    check(foregroundValidator.classify("") == ForegroundStatus.UNKNOWN) {
+        "Blank foreground package must remain unknown."
+    }
+
+    println("PASS: 16 ad policy and foreground validation assertions")
 }
