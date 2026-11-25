@@ -1,0 +1,75 @@
+name: FB-A04.3 Offline Policy Verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Exact commit SHA to verify"
+        required: true
+        default: "a1072cb5858d419be3380b1f476e28d2faafdd07"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fb-a04-3-verify-policy
+  cancel-in-progress: false
+
+jobs:
+  verify-policy:
+    name: Kotlin/JVM verifyPolicy only
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate target SHA
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha must be a full 40-character lowercase commit SHA"
+            exit 1
+          fi
+
+      - name: Checkout exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+
+      - name: Confirm checked out commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "Requested: $TARGET_SHA"
+          echo "Checked out: $ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$TARGET_SHA"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Provision Gradle 9.7.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.0"
+
+      - name: Run offline Kotlin/JVM policy verification
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle --no-daemon --stacktrace :policy:verifyPolicy 2>&1 | tee verify-policy.log
+
+      - name: Upload verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fb-a04-3-verify-policy-log
+          path: verify-policy.log
+          if-no-files-found: warn
