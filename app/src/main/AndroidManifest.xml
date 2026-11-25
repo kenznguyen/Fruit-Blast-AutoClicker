@@ -7,7 +7,7 @@
         android:supportsRtl="true">
 
         <service
-            android:name=".automation.FruitBlastAccessibilityService"
+            android:name="com.fruitblast.app.automation.FruitBlastAccessibilityService"
             android:exported="true"
             android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
