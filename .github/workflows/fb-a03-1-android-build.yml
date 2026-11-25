@@ -39,10 +39,12 @@ jobs:
         with:
           packages: platform-tools
 
-      - name: Install Android 37 platform
+      - name: Install Android 37 preview platform
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager "platforms;android-37"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --list --channel=3 | grep -F "platforms;android-37"
+          sdkmanager --channel=3 "platforms;android-37"
 
       - name: Provision Gradle 9.5.0
         uses: gradle/actions/setup-gradle@v4
