@@ -36,8 +36,8 @@
 - App module: `:app`
 - Android application ID: `com.fruitblast.autoclicker`
 - Namespace: `com.fruitblast.autoclicker`
-- Fruit Blast target package remains `com.funnyvideo.cgame.fruitblast`; these IDs serve different purposes.
-- The app module uses Android Gradle Plugin 9.5.1 and compile SDK 37. The existing Kotlin/JVM root module and its policy test task are retained.
+- The app module uses Android Gradle Plugin 9.3.1 and compile SDK 37. The existing Kotlin/JVM root module and its policy test task are retained.
+- The intended Gradle Wrapper version for FB-A03.1 is 9.5.0; wrapper files and executable verification remain pending.
 - `FruitBlastAccessibilityService` is registered with `BIND_ACCESSIBILITY_SERVICE` and listens only for window-state/windows-changed events.
 - Window-event package is diagnostic state only. The foreground gate reads `rootInActiveWindow` at point of use and fails closed if unavailable; it never falls back to stale event data.
 - No gesture dispatch, wrong-app recovery, MediaProjection, OCR, template detection, or AI is implemented in this task.
