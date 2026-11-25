@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nodes>
+  <node package="com.funnyvideo.cgame.fruitblast" class="android.webkit.WebView" visible="true" enabled="true" clickable="false" width="1080" height="2188"/>
+  <node package="com.funnyvideo.cgame.fruitblast" id="playable" visible="true" enabled="true" clickable="false" width="1080" height="2188"/>
+  <node package="com.funnyvideo.cgame.fruitblast" id="stage" visible="true" enabled="true" clickable="false" width="1078" height="2188"/>
+  <node package="com.funnyvideo.cgame.fruitblast" id="banner" visible="true" enabled="true" clickable="false" width="1078" height="209"/>
+</nodes>
