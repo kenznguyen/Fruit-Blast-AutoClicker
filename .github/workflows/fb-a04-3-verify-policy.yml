@@ -6,7 +6,7 @@ on:
       target_sha:
         description: "Exact commit SHA to verify"
         required: true
-        default: "a1072cb5858d419be3380b1f476e28d2faafdd07"
+        default: "a1072cb5858d419be3380b1f47628e2d2faafdd07"
         type: string
 
 permissions:
