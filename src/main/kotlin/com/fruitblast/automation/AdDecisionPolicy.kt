@@ -36,17 +36,15 @@ enum class AdAction {
  * 5. Otherwise WAIT.
  */
 class AdDecisionPolicy(
-    private val targetPackage: String,
+    private val targetPackage: String = FruitBlastConfig.TARGET_PACKAGE,
 ) {
-    init {
-        require(targetPackage.isNotBlank()) { "targetPackage must not be blank" }
-    }
+    private val foregroundValidator = ForegroundAppValidator(targetPackage)
 
     fun decide(observation: AdObservation): AdAction {
-        val foregroundPackage = observation.foregroundPackage ?: return AdAction.WAIT
-
-        if (foregroundPackage != targetPackage) {
-            return AdAction.RECOVER_WRONG_APP
+        when (foregroundValidator.classify(observation.foregroundPackage)) {
+            ForegroundStatus.UNKNOWN -> return AdAction.WAIT
+            ForegroundStatus.OTHER -> return AdAction.RECOVER_WRONG_APP
+            ForegroundStatus.TARGET -> Unit
         }
 
         if (observation.gameHomeVisible || observation.adCompleted) {
