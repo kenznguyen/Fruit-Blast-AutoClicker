@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fruit Blast AutoClicker</string>
+    <string name="accessibility_service_label">Fruit Blast foreground monitor</string>
+    <string name="accessibility_service_description">Monitors foreground window changes to restrict automation to the configured Fruit Blast app.</string>
+</resources>

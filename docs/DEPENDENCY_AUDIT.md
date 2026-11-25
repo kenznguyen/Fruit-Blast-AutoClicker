@@ -31,10 +31,22 @@
 - `ForegroundAppValidator` classifies exact matches as TARGET, other non-empty packages as OTHER, and null/blank values as UNKNOWN.
 - The ad policy fails closed for UNKNOWN and requests the separate bounded recovery path for OTHER. This classifier does not itself launch or navigate to another app.
 
+## FB-A03 — Android application and foreground adapter
+
+- App module: `:app`
+- Android application ID: `com.fruitblast.autoclicker`
+- Namespace: `com.fruitblast.autoclicker`
+- Fruit Blast target package remains `com.funnyvideo.cgame.fruitblast`; these IDs serve different purposes.
+- The app module uses Android Gradle Plugin 9.5.1 and compile SDK 37. The existing Kotlin/JVM root module and its policy test task are retained.
+- `FruitBlastAccessibilityService` is registered with `BIND_ACCESSIBILITY_SERVICE` and listens only for window-state/windows-changed events.
+- Window-event package is diagnostic state only. The foreground gate reads `rootInActiveWindow` at point of use and fails closed if unavailable; it never falls back to stale event data.
+- No gesture dispatch, wrong-app recovery, MediaProjection, OCR, template detection, or AI is implemented in this task.
+- Android foreground validation is not yet runtime-verified. The point-of-use check is not an atomic OS foreground lock; a future dispatcher must re-check immediately before dispatch and still handle a foreground race safely.
+
 ## Minimal architecture selected
 
 1. Pure Kotlin ad decision policy and exact-package foreground validator (implemented; test cases added, execution evidence pending).
-2. A narrow Android AccessibilityService adapter, to be added only with explicit lifecycle/configuration and manifest integration.
+2. Minimal Android app module and foreground-window AccessibilityService adapter (source added; Gradle/Android runtime verification pending).
 3. A single MediaProjection capture owner, with deterministic release of ImageReader/Image/VirtualDisplay/MediaProjection resources.
 4. A small template matcher for the configured Fruit Blast UI states; no OCR, OpenCV, NCNN or AI in the first implementation.
 5. A bounded controller that consumes observations and emits at most one action per accepted frame. It must validate the foreground package immediately before dispatch, apply cooldown/retry limits, and stop on GAME_HOME/completion.
