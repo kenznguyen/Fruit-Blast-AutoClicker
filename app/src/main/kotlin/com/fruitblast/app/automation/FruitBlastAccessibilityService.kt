@@ -1,9 +1,11 @@
 package com.fruitblast.app.automation
 
 import android.accessibilityservice.AccessibilityService
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.fruitblast.automation.ForegroundAppValidator
 import com.fruitblast.automation.ForegroundStatus
+import com.fruitblast.automation.FruitBlastConfig
 
 /**
  * Minimal Android adapter for foreground-window observation.
@@ -22,7 +24,12 @@ class FruitBlastAccessibilityService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
-                lastWindowEventPackage = event.packageName?.toString()
+                val packageName = event.packageName?.toString()
+                lastWindowEventPackage = packageName
+
+                if (packageName == FruitBlastConfig.TARGET_PACKAGE) {
+                    Log.i(TAG, "eventType=${event.eventType}, targetPackage=$packageName")
+                }
             }
         }
     }
@@ -54,5 +61,9 @@ class FruitBlastAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         lastWindowEventPackage = null
         super.onDestroy()
+    }
+
+    private companion object {
+        const val TAG = "FruitBlastA11y"
     }
 }
