@@ -1,5 +1,19 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+    dependencies {
+        // AGP 9 built-in Kotlin uses this classpath; pin it to the project's
+        // supported Kotlin Gradle Plugin version to avoid loading AGP's
+        // bundled default KGP alongside a different root-project KGP.
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
+    }
+}
+
 plugins {
-    kotlin("jvm") version "2.4.21"
+    kotlin("jvm")
 }
 
 repositories {
