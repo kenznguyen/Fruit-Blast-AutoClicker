@@ -80,6 +80,21 @@ jobs:
           grep -F "gradle-9.7.0-bin.zip" gradle/wrapper/gradle-wrapper.properties
           ./gradlew --version
 
+      - name: Capture host emulator prerequisites
+        shell: bash
+        run: |
+          mkdir -p emulator-diagnostics
+          {
+            echo "=== timestamp ==="; date -Is
+            echo "=== host kernel ==="; uname -a
+            echo "=== CPU virtualization flags ==="; grep -m1 -oE '(vmx|svm)' /proc/cpuinfo | sort -u || true
+            echo "=== /dev/kvm ==="; ls -l /dev/kvm 2>&1 || true
+            echo "=== emulator version ==="; emulator -version 2>&1 || true
+            echo "=== acceleration check ==="; emulator -accel-check 2>&1 || true
+            echo "=== installed SDK packages ==="; sdkmanager --list_installed 2>&1 || true
+            echo "=== AVD list ==="; avdmanager list avd 2>&1 || true
+          } > emulator-diagnostics/host-prerequisites.txt
+
       - name: Run Android emulator tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
@@ -88,7 +103,8 @@ jobs:
           arch: x86_64
           profile: pixel_2
           avd-name: FruitBlast_P2_API35
-          emulator-boot-timeout: 600
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -verbose -show-kernel
           disable-animations: true
           disable-linux-hw-accel: false
           script: |
@@ -201,6 +217,20 @@ jobs:
 
             echo "PASS: AccessibilityService bind/unbind/rebind smoke completed"
             adb logcat -d -s FruitBlastA11y:I > fruitblast-accessibility.log 2>&1 || true
+
+      - name: Capture emulator host diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p emulator-diagnostics
+          {
+            echo "=== timestamp ==="; date -Is
+            echo "=== adb devices ==="; adb devices -l 2>&1 || true
+            echo "=== emulator processes ==="; pgrep -af 'emulator|qemu-system' || true
+            echo "=== AVD files ==="; find "$HOME/.android/avd" -maxdepth 3 -type f -printf '%p %s bytes\\n' 2>&1 | head -200 || true
+            echo "=== AVD config and logs ==="; find "$HOME/.android/avd" -maxdepth 4 -type f \\( -iname '*log*' -o -name 'config.ini' \\) -print 2>&1 | head -200 || true
+            echo "=== adb server ==="; adb server-status 2>&1 || true
+          } > emulator-diagnostics/emulator-host.txt
 
       - name: Capture emulator diagnostics
         if: always()
