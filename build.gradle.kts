@@ -30,6 +30,6 @@ val verifyPolicy by tasks.registering(JavaExec::class) {
     mainClass.set("com.fruitblast.automation.AdDecisionPolicyTestKt")
 }
 
-tasks.check {
+tasks.named("check") {
     dependsOn(verifyPolicy)
 }
