@@ -3,7 +3,7 @@ package com.fruitblast.automation
 /**
  * Executable, dependency-free policy tests.
  *
- * Run with: ./gradlew verifyPolicy
+ * Run with: gradle verifyPolicy
  */
 fun main() {
     val policy = AdDecisionPolicy(targetPackage = "com.fruitblast.game")
