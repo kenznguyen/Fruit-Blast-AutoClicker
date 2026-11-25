@@ -227,8 +227,8 @@ jobs:
             echo "=== timestamp ==="; date -Is
             echo "=== adb devices ==="; adb devices -l 2>&1 || true
             echo "=== emulator processes ==="; pgrep -af 'emulator|qemu-system' || true
-            echo "=== AVD files ==="; find "$HOME/.android/avd" -maxdepth 3 -type f -printf '%p %s bytes\\n' 2>&1 | head -200 || true
-            echo "=== AVD config and logs ==="; find "$HOME/.android/avd" -maxdepth 4 -type f \\( -iname '*log*' -o -name 'config.ini' \\) -print 2>&1 | head -200 || true
+            echo "=== AVD files ==="; find "$HOME/.android/avd" -maxdepth 3 -type f -printf '%p %s bytes\n' 2>&1 | head -200 || true
+            echo "=== AVD config and logs ==="; find "$HOME/.android/avd" -maxdepth 4 -type f \( -iname '*log*' -o -name 'config.ini' \) -print 2>&1 | head -200 || true
             echo "=== adb server ==="; adb server-status 2>&1 || true
           } > emulator-diagnostics/emulator-host.txt
 
