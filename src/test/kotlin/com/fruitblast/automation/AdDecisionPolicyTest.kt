@@ -144,6 +144,8 @@ fun main() {
         "Mixed-package node trees must fail closed."
     }
 
+    runAdUiFixtureTests()
+
     println("PASS: 16 ad policy/foreground and 11 UI classifier assertions")
 
 }
