@@ -32,8 +32,9 @@ enum class AdAction {
  * 1. Unknown foreground -> WAIT.
  * 2. Wrong foreground app -> RECOVER_WRONG_APP.
  * 3. Completion or game home -> STOP.
- * 4. Close, then Next, then Continue.
- * 5. Otherwise WAIT.
+ * 4. While an ad is playing -> WAIT (never emit an input action).
+ * 5. Close, then Next, then Continue.
+ * 6. Otherwise WAIT.
  */
 class AdDecisionPolicy(
     private val targetPackage: String = FruitBlastConfig.TARGET_PACKAGE,
@@ -49,6 +50,10 @@ class AdDecisionPolicy(
 
         if (observation.gameHomeVisible || observation.adCompleted) {
             return AdAction.STOP
+        }
+
+        if (observation.adPlaying) {
+            return AdAction.WAIT
         }
 
         return when {
