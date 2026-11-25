@@ -8,4 +8,4 @@ pluginManagement {
 
 rootProject.name = "FruitBlastAutoClicker"
 
-include(":app")
+include(":app", ":policy")

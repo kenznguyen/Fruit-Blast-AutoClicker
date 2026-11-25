@@ -6,6 +6,8 @@ on:
     paths:
       - ".github/workflows/fb-a03-1-android-build.yml"
       - "app/**"
+      - "policy/**"
+      - "src/**"
       - "build.gradle.kts"
       - "settings.gradle.kts"
       - "gradle/**"
@@ -61,7 +63,7 @@ jobs:
           ./gradlew --version
 
       - name: Run Kotlin/JVM policy tests
-        run: ./gradlew --no-daemon test verifyPolicy
+        run: ./gradlew --no-daemon :policy:test :policy:verifyPolicy
 
       - name: Assemble debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
