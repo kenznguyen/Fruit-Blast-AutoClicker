@@ -142,9 +142,10 @@ jobs:
             trap restore_settings EXIT
 
             service_is_bound() {
-              adb shell dumpsys accessibility 2>/dev/null |
+              local dump
+              dump="$(adb shell dumpsys accessibility)" || return 2
+              printf '%s\n' "$dump" |
                 sed -n '/Bound services:/,/Enabled services:/p' |
-                tr -d '\r' |
                 grep -Fq "$SERVICE"
             }
 
@@ -153,6 +154,12 @@ jobs:
                 if service_is_bound; then
                   echo "PASS: AccessibilityService bound (attempt $attempt)"
                   return 0
+                else
+                  local status=$?
+                  if [[ $status -gt 1 ]]; then
+                    echo "::error::Unable to read AccessibilityManager state"
+                    return "$status"
+                  fi
                 fi
                 sleep 1
               done
@@ -163,9 +170,16 @@ jobs:
 
             wait_for_unbound() {
               for attempt in $(seq 1 30); do
-                if ! service_is_bound; then
-                  echo "PASS: AccessibilityService unbound (attempt $attempt)"
-                  return 0
+                if service_is_bound; then
+                  :
+                else
+                  local status=$?
+                  if [[ $status -eq 1 ]]; then
+                    echo "PASS: AccessibilityService unbound (attempt $attempt)"
+                    return 0
+                  fi
+                  echo "::error::Unable to read AccessibilityManager state"
+                  return "$status"
                 fi
                 sleep 1
               done
