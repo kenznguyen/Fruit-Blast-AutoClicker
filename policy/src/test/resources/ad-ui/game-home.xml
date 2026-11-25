@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nodes>
+  <node package="com.funnyvideo.cgame.fruitblast" class="android.view.View" description="Game view" visible="true" enabled="true" clickable="false" width="1080" height="2272"/>
+  <node package="com.funnyvideo.cgame.fruitblast" class="android.widget.ImageView" description="Piggy Bank" visible="true" enabled="true" clickable="true" width="120" height="120"/>
+</nodes>
