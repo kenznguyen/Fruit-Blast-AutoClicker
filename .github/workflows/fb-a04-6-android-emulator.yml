@@ -1,0 +1,216 @@
+name: FB-A04.6 Android Emulator Instrumentation
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Exact 40-character commit SHA to test"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fb-a04-6-android-emulator
+  cancel-in-progress: false
+
+jobs:
+  android-emulator:
+    name: P1 instrumentation and P2 service lifecycle smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Validate target SHA
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::target_sha must be a full 40-character lowercase commit SHA"
+            exit 1
+          fi
+
+      - name: Checkout exact target commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+
+      - name: Confirm checked out commit
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "Requested: $TARGET_SHA"
+          echo "Checked out: $ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$TARGET_SHA"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools emulator
+
+      - name: Install Android 37 preview compile platform
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --list --channel=3 | grep -E 'platforms;android-37\.0[[:space:]]'
+          sdkmanager --channel=3 "platforms;android-37.0"
+          test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
+
+      - name: Provision Gradle 9.7.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.7.0"
+
+      - name: Generate and verify Gradle Wrapper
+        shell: bash
+        run: |
+          gradle wrapper --gradle-version 9.7.0 --distribution-type bin --stacktrace
+          test -x ./gradlew
+          grep -F "gradle-9.7.0-bin.zip" gradle/wrapper/gradle-wrapper.properties
+          ./gradlew --version
+
+      - name: Run Android emulator tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          avd-name: FruitBlast_P2_API35
+          emulator-boot-timeout: 600
+          disable-animations: true
+          disable-linux-hw-accel: false
+          script: |
+            set -euo pipefail
+
+            echo "=== P1: Android instrumentation ==="
+            ./gradlew --no-daemon --stacktrace :app:connectedDebugAndroidTest
+
+            echo "=== P2: AccessibilityService bind/unbind/rebind smoke ==="
+            ./gradlew --no-daemon --stacktrace :app:installDebug
+
+            SERVICE="com.fruitblast.autoclicker/com.fruitblast.app.automation.FruitBlastAccessibilityService"
+            ORIGINAL_SERVICES="$(adb shell settings get secure enabled_accessibility_services | tr -d '\r')"
+            ORIGINAL_ACCESSIBILITY_ENABLED="$(adb shell settings get secure accessibility_enabled | tr -d '\r')"
+
+            if [[ "$ORIGINAL_SERVICES" == "null" ]]; then
+              ORIGINAL_SERVICES=""
+            fi
+
+            OTHER_SERVICES="$(printf '%s' "$ORIGINAL_SERVICES" | tr ':' '\n' | awk -v service="$SERVICE" '$0 != service && length($0) { if (out) out=out ":" $0; else out=$0 } END { print out }')"
+            ENABLED_SERVICES="$SERVICE"
+            if [[ -n "$OTHER_SERVICES" ]]; then
+              ENABLED_SERVICES="$OTHER_SERVICES:$SERVICE"
+            fi
+
+            restore_setting() {
+              local key="$1"
+              local value="$2"
+              if [[ -z "$value" || "$value" == "null" ]]; then
+                adb shell settings delete secure "$key" >/dev/null 2>&1 || true
+              else
+                adb shell settings put secure "$key" "$value"
+              fi
+            }
+
+            restore_settings() {
+              local result=$?
+              trap - EXIT
+              set +e
+              restore_setting enabled_accessibility_services "$ORIGINAL_SERVICES"
+              local services_result=$?
+              restore_setting accessibility_enabled "$ORIGINAL_ACCESSIBILITY_ENABLED"
+              local enabled_result=$?
+              if [[ $services_result -ne 0 || $enabled_result -ne 0 ]]; then
+                echo "::error::Failed to restore the original Accessibility Settings state"
+                result=1
+              fi
+              adb shell dumpsys accessibility > accessibility-after-restore.txt 2>&1
+              exit "$result"
+            }
+            trap restore_settings EXIT
+
+            service_is_bound() {
+              adb shell dumpsys accessibility 2>/dev/null |
+                sed -n '/Bound services:/,/Enabled services:/p' |
+                tr -d '\r' |
+                grep -Fq "$SERVICE"
+            }
+
+            wait_for_bound() {
+              for attempt in $(seq 1 45); do
+                if service_is_bound; then
+                  echo "PASS: AccessibilityService bound (attempt $attempt)"
+                  return 0
+                fi
+                sleep 1
+              done
+              adb shell dumpsys accessibility
+              echo "::error::AccessibilityService did not bind within 45 seconds"
+              return 1
+            }
+
+            wait_for_unbound() {
+              for attempt in $(seq 1 30); do
+                if ! service_is_bound; then
+                  echo "PASS: AccessibilityService unbound (attempt $attempt)"
+                  return 0
+                fi
+                sleep 1
+              done
+              adb shell dumpsys accessibility
+              echo "::error::AccessibilityService did not unbind within 30 seconds"
+              return 1
+            }
+
+            adb shell settings put secure enabled_accessibility_services "$ENABLED_SERVICES"
+            adb shell settings put secure accessibility_enabled 1
+            wait_for_bound
+
+            adb shell settings put secure enabled_accessibility_services "$OTHER_SERVICES"
+            wait_for_unbound
+
+            adb shell settings put secure enabled_accessibility_services "$ENABLED_SERVICES"
+            adb shell settings put secure accessibility_enabled 1
+            wait_for_bound
+
+            echo "PASS: AccessibilityService bind/unbind/rebind smoke completed"
+            adb logcat -d -s FruitBlastA11y:I > fruitblast-accessibility.log 2>&1 || true
+
+      - name: Capture emulator diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p emulator-diagnostics
+          adb devices -l > emulator-diagnostics/adb-devices.txt 2>&1 || true
+          adb shell dumpsys accessibility > emulator-diagnostics/accessibility.txt 2>&1 || true
+          adb logcat -d -v time > emulator-diagnostics/logcat.txt 2>&1 || true
+          if [[ -f fruitblast-accessibility.log ]]; then
+            cp fruitblast-accessibility.log emulator-diagnostics/
+          fi
+          if [[ -f accessibility-after-restore.txt ]]; then
+            cp accessibility-after-restore.txt emulator-diagnostics/
+          fi
+
+      - name: Upload instrumentation reports and emulator diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fb-a04-6-android-emulator-${{ inputs.target_sha }}
+          path: |
+            app/build/reports/androidTests/connected/
+            app/build/outputs/androidTest-results/connected/
+            emulator-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
