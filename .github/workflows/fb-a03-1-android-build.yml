@@ -55,7 +55,7 @@ jobs:
       - name: Generate and verify Gradle Wrapper
         shell: bash
         run: |
-          gradle wrapper --gradle-version 9.5.0 --distribution-type bin
+          gradle wrapper --gradle-version 9.5.0 --distribution-type bin --stacktrace
           test -x ./gradlew
           grep -F "gradle-9.5.0-bin.zip" gradle/wrapper/gradle-wrapper.properties
           ./gradlew --version
