@@ -32,6 +32,21 @@ fun main() {
     check(decision(next = true) == AdAction.NEXT) { "Next must be selected when close is unavailable." }
     check(decision(continueAd = true) == AdAction.CONTINUE) { "Continue must be selected for a paused ad." }
     check(decision(playing = true) == AdAction.WAIT) { "An active ad must not receive an input action." }
+    check(decision(close = true, playing = true) == AdAction.WAIT) {
+        "A visible Close control must not be selected while the ad is playing."
+    }
+    check(decision(next = true, playing = true) == AdAction.WAIT) {
+        "A visible Next control must not be selected while the ad is playing."
+    }
+    check(decision(continueAd = true, playing = true) == AdAction.WAIT) {
+        "A visible Continue control must not be selected while the ad is playing."
+    }
+    check(decision(playing = true, completed = true) == AdAction.STOP) {
+        "Completion must retain STOP precedence while the ad-playing flag is set."
+    }
+    check(decision(playing = true, gameHome = true) == AdAction.STOP) {
+        "Game home must retain STOP precedence while the ad-playing flag is set."
+    }
     check(decision(completed = true) == AdAction.STOP) { "Completed ad must stop automation." }
     check(decision(gameHome = true) == AdAction.STOP) { "Game home must stop automation." }
     check(decision(packageName = "com.android.vending") == AdAction.RECOVER_WRONG_APP) {
@@ -146,6 +161,6 @@ fun main() {
 
     runAdUiFixtureTests()
 
-    println("PASS: 16 ad policy/foreground and 11 UI classifier assertions")
+    println("PASS: 21 ad policy/foreground and 11 UI classifier assertions")
 
 }
