@@ -159,6 +159,8 @@ fun main() {
         "Mixed-package node trees must fail closed."
     }
 
+    runBoundedNodeTraversalTests()
+
     runAdUiFixtureTests()
 
     println("PASS: 21 ad policy/foreground and 11 UI classifier assertions")
