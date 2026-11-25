@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension
+
 buildscript {
     repositories {
         google()
@@ -5,29 +7,26 @@ buildscript {
         gradlePluginPortal()
     }
     dependencies {
-        // AGP 9 built-in Kotlin uses this classpath; pin it to the project's
-        // supported Kotlin Gradle Plugin version to avoid loading AGP's
-        // bundled default KGP alongside a different root-project KGP.
+        // AGP 9 uses built-in Kotlin. Pin its KGP runtime to the project's
+        // selected version rather than loading AGP's bundled default KGP.
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.21")
     }
 }
 
-plugins {
-    kotlin("jvm")
-}
+apply(plugin = "org.jetbrains.kotlin.jvm")
 
 repositories {
     mavenCentral()
 }
 
-kotlin {
+extensions.configure<KotlinJvmProjectExtension> {
     jvmToolchain(21)
 }
 
 val verifyPolicy by tasks.registering(JavaExec::class) {
     group = "verification"
     description = "Runs deterministic ad decision policy tests."
-    classpath = sourceSets["test"].runtimeClasspath
+    classpath = configurations["testRuntimeClasspath"]
     mainClass.set("com.fruitblast.automation.AdDecisionPolicyTestKt")
 }
 
