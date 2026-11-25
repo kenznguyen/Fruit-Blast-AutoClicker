@@ -23,9 +23,17 @@
 | `core/smart/detection/.../NativeDetector.kt` and `src/main/cpp/**` | JNI, CMake, OpenCV, NCNN, native image/text/color matching and model loading | Exclude. This is the main source of native build/dependency weight and includes OCR/model functionality not required initially. |
 | `smartautoclicker/.../SmartAutoClickerService.kt` | Hilt; LocalAccessibilityServiceConnection; overlay, settings, quality, revenue, tutorial, debug, tile, review, database/domain engines | Do not copy. Build a small app-owned AccessibilityService with only lifecycle and foreground-window validation needed by this app. |
 
+## Verified target application
+
+- Fruit Blast package ID: `com.funnyvideo.cgame.fruitblast`
+- Evidence: uploaded device ADB logs contain the package in the Android input-method `EditorInfo.packageName` record and the game process/app log records.
+- The package ID is centralized in `FruitBlastConfig.TARGET_PACKAGE`.
+- `ForegroundAppValidator` classifies exact matches as TARGET, other non-empty packages as OTHER, and null/blank values as UNKNOWN.
+- The ad policy fails closed for UNKNOWN and requests the separate bounded recovery path for OTHER. This classifier does not itself launch or navigate to another app.
+
 ## Minimal architecture selected
 
-1. Pure Kotlin ad decision policy (implemented and unit-tested).
+1. Pure Kotlin ad decision policy and exact-package foreground validator (implemented; test cases added, execution evidence pending).
 2. A narrow Android AccessibilityService adapter, to be added only with explicit lifecycle/configuration and manifest integration.
 3. A single MediaProjection capture owner, with deterministic release of ImageReader/Image/VirtualDisplay/MediaProjection resources.
 4. A small template matcher for the configured Fruit Blast UI states; no OCR, OpenCV, NCNN or AI in the first implementation.
