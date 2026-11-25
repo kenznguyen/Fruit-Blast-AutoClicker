@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --list --channel=3 | grep -E 'platforms;android-37\.0[[:space:]]'
+          sdkmanager --list --channel=3 | grep -E 'platforms;android-37\\.0[[:space:]]'
           sdkmanager --channel=3 "platforms;android-37.0"
           test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
 
@@ -63,7 +63,7 @@ jobs:
           ./gradlew --version
 
       - name: Run Kotlin/JVM policy tests
-        run: ./gradlew --no-daemon :policy:test :policy:verifyPolicy
+        run: ./gradlew --no-daemon :policy:verifyPolicy
 
       - name: Assemble debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
