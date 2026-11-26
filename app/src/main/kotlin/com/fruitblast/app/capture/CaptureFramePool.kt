@@ -215,11 +215,29 @@ class CaptureFramePool<T : Any>(
         closed && frame == null && !leaseOutstanding && releases.isEmpty()
 
     private fun notifyDrainObserversIfComplete() {
-        val callbacks = synchronized(lock) {
-            if (!isDrainedLocked() || drainObservers.isEmpty()) return
-            drainObservers.toList().also { drainObservers.clear() }
+        val notification = synchronized(lock) {
+            if (drainObservers.isEmpty()) return
+            val result = when {
+                isDrainedLocked() -> CaptureDrainResult.DRAINED
+                closed && frame == null && !leaseOutstanding &&
+                    releases.values.none {
+                        it.state == ReleaseState.PENDING ||
+                            it.state == ReleaseState.DISPATCHING ||
+                            it.state == ReleaseState.ACTIVE
+                    } && releases.values.any { it.state == ReleaseState.FAILED } ->
+                    CaptureDrainResult.RELEASE_FAILED
+                closed && frame == null && !leaseOutstanding &&
+                    releases.values.none {
+                        it.state == ReleaseState.PENDING ||
+                            it.state == ReleaseState.DISPATCHING ||
+                            it.state == ReleaseState.ACTIVE
+                    } && releases.values.any { it.state == ReleaseState.UNKNOWN } ->
+                    CaptureDrainResult.RELEASE_UNKNOWN
+                else -> null
+            } ?: return
+            drainObservers.toList().also { drainObservers.clear() } to result
         }
-        callbacks.forEach { it(CaptureDrainResult.DRAINED) }
+        notification.first.forEach { it(notification.second) }
     }
 
     private data class ReleaseRecord<T : Any>(
