@@ -49,9 +49,12 @@ interface ReleaseProof {
  * constructing or copying instances through the public API.
  *
  * The internal issuer bridge is not a security boundary: same-module code can call
- * it. Authenticity is established only by the trusted ReleaseProofVerifier.
+ * it. The verifier and transition/recovery entry points are module-internal so
+ * external Kotlin consumers cannot supply their own verifier. Same-module code
+ * remains trusted; this is not a security boundary against hostile module code.
+ * The designated capture release-authority adapter is the only approved issuer.
  */
-class VerifiedReleaseProof private constructor(
+internal class VerifiedReleaseProof private constructor(
     override val descriptor: OwnershipTransferDescriptor,
     override val authorityId: String,
     override val evidenceId: String,
@@ -74,10 +77,12 @@ class VerifiedReleaseProof private constructor(
 /**
  * Trusted composition-root capability for validating release evidence.
  *
+ * The trusted capture release-authority adapter supplies this capability.
  * Implementations must bind authorityId/evidenceId to independently verified,
  * terminal release evidence. A permissive implementation is not an authority.
+ * This internal contract does not authenticate same-module implementations.
  */
-fun interface ReleaseProofVerifier {
+internal fun interface ReleaseProofVerifier {
     fun verify(proof: ReleaseProof, descriptor: OwnershipTransferDescriptor): Boolean
 }
 
@@ -137,7 +142,7 @@ class DurableReleaseIntent private constructor(
      * by the trusted composition root; verifier exceptions fail closed.
      * A durable ledger must additionally make revision CAS and event writes atomic.
      */
-    fun transition(
+    internal fun transition(
         change: ReleaseIntentTransition,
         proofVerifier: ReleaseProofVerifier? = null,
     ): ReleaseIntentTransitionResult {
@@ -249,7 +254,7 @@ class DurableReleaseIntent private constructor(
          * authority/evidence metadata. PREPARED, ACCEPTED and UNKNOWN do not need a
          * release proof; UNKNOWN remains quarantined and is not resolved here.
          */
-        fun restore(
+        internal fun restore(
             descriptor: OwnershipTransferDescriptor,
             schemaVersion: Int,
             obligationState: ReleaseObligationState,
