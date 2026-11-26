@@ -2,7 +2,9 @@ name: FB-A03.1 Android Build Verification
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - feat/f08-b2-r4-capture-frame-pool
     paths:
       - ".github/workflows/fb-a03-1-android-build.yml"
       - "app/**"
@@ -94,6 +96,8 @@ jobs:
           expected = {
               "com.fruitblast.app.capture.CaptureSessionStateTest",
               "com.fruitblast.app.capture.CaptureSessionOwnerTest",
+              "com.fruitblast.app.capture.OwnershipTransferTypesTest",
+              "com.fruitblast.app.capture.SessionQuarantineRegistryTest",
           }
           missing = sorted(expected - classes)
           assert not missing, f"Expected capture unit test classes missing from execution reports: {missing}"
