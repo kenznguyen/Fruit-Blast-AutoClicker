@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Modifier
 
 class DurableReleaseIntentContractsTest {
     @Test
@@ -292,4 +293,33 @@ class DurableReleaseIntentContractsTest {
             // Expected contract validation failure.
         }
     }
+    @Test
+    fun durableIntentHasNoPublicConstructionOrCopyBypass() {
+        assertTrue(
+            "DurableReleaseIntent must expose only controlled factories",
+            DurableReleaseIntent::class.java.constructors.none { Modifier.isPublic(it.modifiers) },
+        )
+        assertTrue(
+            "DurableReleaseIntent must not expose a data-class copy bypass",
+            DurableReleaseIntent::class.java.methods.none { it.name == "copy" },
+        )
+    }
+
+    @Test
+    fun verifiedReleaseProofHasNoPublicConstructionOrCopyBypass() {
+        assertTrue(
+            "VerifiedReleaseProof must expose no public constructor",
+            VerifiedReleaseProof::class.java.constructors.none { Modifier.isPublic(it.modifiers) },
+        )
+        assertTrue(
+            "VerifiedReleaseProof must not expose a data-class copy bypass",
+            VerifiedReleaseProof::class.java.methods.none { it.name == "copy" },
+        )
+    }
+
+    @Test
+    fun durableDecisionPolicyExistsForBehavioralCommitAndLookupResolution() {
+        Class.forName("com.fruitblast.app.capture.DurableReleaseIntentDecisionPolicy")
+    }
+
 }
