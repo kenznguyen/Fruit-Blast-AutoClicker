@@ -129,4 +129,86 @@ class CaptureFramePoolTest {
         assertFalse(pool.offerLatest("late") == FramePublishResult.STORED)
         assertEquals(2, releases)
     }
+
+    @Test
+    fun releaseCallbackFailureDoesNotChangePublishResult() {
+        val pool = CaptureFramePool<String> {
+            if (it == "old-frame") error("release failed")
+        }
+        pool.offerLatest("old-frame")
+
+        val result = pool.offerLatest("new-frame")
+
+        assertEquals(FramePublishResult.REPLACED, result)
+        pool.close()
+    }
+
+    @Test
+    fun rejectedReleaseDispatchRemainsPendingUntilAccepted() {
+        var dispatchAttempts = 0
+        val handler = object : FrameReleaseHandler<String> {
+            override fun dispatch(
+                request: FrameReleaseRequest<String>,
+                completion: (FrameReleaseCompletion) -> Unit,
+            ): ReleaseDispatchResult {
+                dispatchAttempts += 1
+                return ReleaseDispatchResult.REJECTED_NOT_ACCEPTED
+            }
+        }
+        val pool = CaptureFramePool(releaseHandler = handler)
+
+        pool.offerLatest("old-frame")
+        assertEquals(FramePublishResult.REPLACED, pool.offerLatest("new-frame"))
+
+        val snapshot = pool.snapshot()
+        assertEquals(1, snapshot.pendingReleaseCount)
+        assertEquals(1, dispatchAttempts)
+        pool.close()
+    }
+
+    @Test
+    fun unknownDispatchOutcomeIsUnresolvedAndIsNotRetried() {
+        var dispatchAttempts = 0
+        val handler = object : FrameReleaseHandler<String> {
+            override fun dispatch(
+                request: FrameReleaseRequest<String>,
+                completion: (FrameReleaseCompletion) -> Unit,
+            ): ReleaseDispatchResult {
+                dispatchAttempts += 1
+                error("dispatch outcome cannot be determined")
+            }
+        }
+        val pool = CaptureFramePool(releaseHandler = handler)
+
+        pool.offerLatest("old-frame")
+        assertEquals(FramePublishResult.REPLACED, pool.offerLatest("new-frame"))
+
+        val snapshot = pool.snapshot()
+        assertEquals(1, snapshot.unresolvedReleaseCount)
+        assertEquals(1, dispatchAttempts)
+        pool.close()
+    }
+
+    @Test
+    fun unknownReleaseCompletionRemainsUnresolved() {
+        lateinit var completionCallback: (FrameReleaseCompletion) -> Unit
+        val handler = object : FrameReleaseHandler<String> {
+            override fun dispatch(
+                request: FrameReleaseRequest<String>,
+                completion: (FrameReleaseCompletion) -> Unit,
+            ): ReleaseDispatchResult {
+                completionCallback = completion
+                return ReleaseDispatchResult.ACCEPTED
+            }
+        }
+        val pool = CaptureFramePool(releaseHandler = handler)
+
+        pool.offerLatest("old-frame")
+        pool.offerLatest("new-frame")
+        completionCallback(FrameReleaseCompletion.UNKNOWN)
+
+        assertEquals(1, pool.snapshot().unresolvedReleaseCount)
+        pool.close()
+    }
+
 }
