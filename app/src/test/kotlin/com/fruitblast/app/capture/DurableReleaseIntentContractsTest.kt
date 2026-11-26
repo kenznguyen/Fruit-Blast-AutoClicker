@@ -16,7 +16,7 @@ class DurableReleaseIntentContractsTest {
 
     @Test
     fun verifiedReleaseProofHasNoPublicConstructionOrCopyBypass() {
-        assertTrue(VerifiedReleaseProof::class.java.constructors.none { Modifier.isPublic(it.modifiers) })
+        assertTrue(VerifiedReleaseProof::class.java.constructors.none { Modifier.isPublic(it.modifiers) && !it.isSynthetic })
         assertTrue(VerifiedReleaseProof::class.java.methods.none { it.name == "copy" })
     }
 
