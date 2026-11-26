@@ -47,7 +47,12 @@ enum class OwnershipTransferStatus {
 }
 
 /**
- * Receives custody of a resource after the transfer has been atomically committed.
+ * Atomically transfers custody of a resource to the quarantine registry.
+ *
+ * Before commit, the registry may validate and retain a reference but must not
+ * release, reuse, or otherwise operate the resource. Repeated submissions with
+ * the same transfer ID and descriptor must be idempotent. Reusing an ID with a
+ * different descriptor is a contract violation.
  */
 interface ReleaseOwnershipSink<T : Any> {
     fun acceptOwnership(
@@ -55,6 +60,13 @@ interface ReleaseOwnershipSink<T : Any> {
         resource: T,
     ): OwnershipTransferResult
 
+    /**
+     * Queries the commit state for a transfer.
+     *
+     * NOT_COMMITTED guarantees that no commit is in flight and that no earlier
+     * submission for this transfer ID can complete later. UNKNOWN requires the
+     * caller to keep the resource frozen and retain custody.
+     */
     fun queryTransfer(transferId: String): OwnershipTransferStatus
 }
 /** Stable resource metadata used to construct an ownership-transfer descriptor. */
