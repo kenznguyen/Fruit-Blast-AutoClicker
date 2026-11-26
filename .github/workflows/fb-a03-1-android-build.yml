@@ -125,6 +125,7 @@ jobs:
 
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
+          import re
 
           ANDROID = "{http://schemas.android.com/apk/res/android}"
           production = ET.parse("verification-logs/production-manifest.xml").getroot()
@@ -150,7 +151,26 @@ jobs:
               node.get(ANDROID + "name"): node.get(ANDROID + "resource")
               for node in service.findall("meta-data")
           }
-          assert metadata.get("android.accessibilityservice") == "@xml/fruit_blast_accessibility_service", "AccessibilityService metadata resource mismatch"
+          resource_ref = metadata.get("android.accessibilityservice")
+          resource_match = re.fullmatch(r"@ref/0x([0-9a-fA-F]{8})", resource_ref or "")
+          assert resource_match, f"AccessibilityService metadata must reference a compiled resource, got {resource_ref!r}"
+          resource_id = resource_match.group(1).lower()
+
+          import os
+          import subprocess
+          from pathlib import Path
+          build_tools = Path(os.environ["ANDROID_HOME"]) / "build-tools"
+          aapt_candidates = sorted(build_tools.glob("*/aapt"), reverse=True)
+          assert aapt_candidates, "Android build-tools aapt executable is missing"
+          resource_dump = subprocess.run(
+              [str(aapt_candidates[0]), "dump", "resources", "app/build/outputs/apk/debug/app-debug.apk"],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          resource_pattern = rf"resource\s+0x{resource_id}\s+[^\s:]+:xml/fruit_blast_accessibility_service\b"
+          assert re.search(resource_pattern, resource_dump), (
+              "AccessibilityService metadata resource ID does not map to "
+              "xml/fruit_blast_accessibility_service in the APK resource table"
+          )
 
           fixture_name = "com.fruitblast.app.automation.AccessibilityNodeFixtureActivity"
           production_activities = [
