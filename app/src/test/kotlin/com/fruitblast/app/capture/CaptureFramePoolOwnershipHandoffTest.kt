@@ -522,4 +522,26 @@ class CaptureFramePoolOwnershipHandoffTest {
         assertEquals(0, pool.snapshot().unresolvedOwnershipTransferCount)
     }
 
+    @Test fun sessionQuarantineRegistryAcceptsPoolHandoffEndToEnd() {
+        val registry = SessionQuarantineRegistry<String>()
+        val pool = CaptureFramePool<String>(
+            releaseHandler = handler(outcome = FrameReleaseCompletion.UNKNOWN),
+            sessionGeneration = 42L,
+            ownershipSink = registry,
+            metadataProvider = FixedMetadataProvider(),
+            clockMillis = { 1234L },
+        )
+
+        triggerRelease(pool)
+
+        assertEquals(
+            OwnershipTransferStatus.ACCEPTED,
+            registry.queryTransfer("capture-frame:42:1"),
+        )
+        assertEquals(0, pool.snapshot().pendingOwnershipTransferCount)
+        assertEquals(0, pool.snapshot().inFlightOwnershipTransferCount)
+        assertEquals(0, pool.snapshot().unresolvedOwnershipTransferCount)
+        assertEquals(0, pool.snapshot().unresolvedReleaseCount)
+    }
+
 }
