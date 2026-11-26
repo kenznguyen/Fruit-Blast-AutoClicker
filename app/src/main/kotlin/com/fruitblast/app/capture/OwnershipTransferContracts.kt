@@ -37,6 +37,7 @@ enum class OwnershipTransferResult {
     ACCEPTED,
     ALREADY_ACCEPTED,
     REJECTED_NOT_ACCEPTED,
+    CONTRACT_VIOLATION,
     UNKNOWN,
 }
 

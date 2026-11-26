@@ -16,6 +16,7 @@ class SessionQuarantineRegistry<T : Any> : ReleaseOwnershipSink<T> {
     private val lock = Any()
     private val transfers = linkedMapOf<String, TransferRecord<T>>()
     private val resources = IdentityHashMap<T, String>()
+    private val resourceIds = mutableMapOf<Long, String>()
     private val sessionGenerations = linkedSetOf<Long>()
     private var quarantinedBytes = 0L
 
@@ -30,8 +31,13 @@ class SessionQuarantineRegistry<T : Any> : ReleaseOwnershipSink<T> {
             ) {
                 OwnershipTransferResult.ALREADY_ACCEPTED
             } else {
-                OwnershipTransferResult.REJECTED_NOT_ACCEPTED
+                OwnershipTransferResult.CONTRACT_VIOLATION
             }
+        }
+
+        val resourceTransfer = resourceIds[descriptor.resourceId]
+        if (resourceTransfer != null) {
+            return@synchronized OwnershipTransferResult.CONTRACT_VIOLATION
         }
 
         if (resources.containsKey(resource)) {
@@ -55,6 +61,7 @@ class SessionQuarantineRegistry<T : Any> : ReleaseOwnershipSink<T> {
         // Commit all custody and accounting indexes together while holding the lock.
         transfers[descriptor.transferId] = TransferRecord(descriptor, resource)
         resources[resource] = descriptor.transferId
+        resourceIds[descriptor.resourceId] = descriptor.transferId
         sessionGenerations += descriptor.sessionGeneration
         quarantinedBytes += descriptor.estimatedBytes
         OwnershipTransferResult.ACCEPTED

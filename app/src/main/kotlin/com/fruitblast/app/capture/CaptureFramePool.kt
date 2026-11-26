@@ -213,7 +213,8 @@ class CaptureFramePool<T : Any>(
                     it.ownershipState == OwnershipState.RECONCILING
             },
             unresolvedOwnershipTransferCount = releases.values.count {
-                it.ownershipState == OwnershipState.UNKNOWN
+                it.ownershipState == OwnershipState.UNKNOWN ||
+                    it.ownershipState == OwnershipState.CONTRACT_VIOLATION
             },
         )
     }
@@ -418,6 +419,14 @@ class CaptureFramePool<T : Any>(
                     record.ownershipState = OwnershipState.PENDING
                 }
             }
+            OwnershipTransferResult.CONTRACT_VIOLATION -> synchronized(lock) {
+                if (releases[record.request.releaseId] === record &&
+                    record.ownershipState == OwnershipState.IN_FLIGHT
+                ) {
+                    // Terminal: retain caller custody and never retry a violated contract.
+                    record.ownershipState = OwnershipState.CONTRACT_VIOLATION
+                }
+            }
             OwnershipTransferResult.UNKNOWN -> synchronized(lock) {
                 if (releases[record.request.releaseId] === record &&
                     record.ownershipState == OwnershipState.IN_FLIGHT
@@ -468,6 +477,14 @@ class CaptureFramePool<T : Any>(
                         it.releaseState == ReleaseState.UNKNOWN ||
                             it.ownershipState == OwnershipState.UNKNOWN
                     } -> CaptureDrainResult.RELEASE_UNKNOWN
+                closed && frame == null && !leaseOutstanding &&
+                    releases.values.none {
+                        it.releaseState == ReleaseState.PENDING ||
+                            it.releaseState == ReleaseState.DISPATCHING ||
+                            it.releaseState == ReleaseState.ACTIVE
+                    } && releases.values.any {
+                        it.ownershipState == OwnershipState.CONTRACT_VIOLATION
+                    } -> CaptureDrainResult.OWNERSHIP_CONTRACT_VIOLATION
                 else -> null
             } ?: return
             drainObservers.toList().also { drainObservers.clear() } to result
@@ -487,7 +504,7 @@ class CaptureFramePool<T : Any>(
     )
 
     private enum class ReleaseState { PENDING, DISPATCHING, ACTIVE, FAILED, UNKNOWN }
-    private enum class OwnershipState { PENDING, IN_FLIGHT, RECONCILING, UNKNOWN }
+    private enum class OwnershipState { PENDING, IN_FLIGHT, RECONCILING, UNKNOWN, CONTRACT_VIOLATION }
 
     private companion object {
         const val MAX_RETRIES = 3
@@ -513,7 +530,14 @@ data class FrameReleaseRequest<T : Any>(
 enum class FrameReleaseReason { REPLACED, BACKPRESSURE, CLOSED, DRAIN, LEASE_CLOSED }
 enum class ReleaseDispatchResult { ACCEPTED, REJECTED_NOT_ACCEPTED }
 enum class FrameReleaseCompletion { RELEASED, FAILED, UNKNOWN }
-enum class CaptureDrainResult { DRAINED, TIMED_OUT, RELEASE_FAILED, RELEASE_UNKNOWN, INVALID_SESSION }
+enum class CaptureDrainResult {
+    DRAINED,
+    TIMED_OUT,
+    RELEASE_FAILED,
+    RELEASE_UNKNOWN,
+    OWNERSHIP_CONTRACT_VIOLATION,
+    INVALID_SESSION,
+}
 
 data class CaptureDrainSnapshot(
     val ingestionStopped: Boolean,
