@@ -9,7 +9,7 @@ class DurableReleaseIntentContractsTest {
     @Test
     fun preparedIntentPreservesIdentityAndDurableMetadata() {
         val descriptor = ownershipDescriptor()
-        val intent = preparedIntent(descriptor)
+        val intent = preparedIntent(descriptor = descriptor)
 
         assertEquals(descriptor, intent.descriptor)
         assertEquals(1, intent.schemaVersion)
@@ -105,6 +105,7 @@ class DurableReleaseIntentContractsTest {
     )
 
     private fun preparedIntent(
+        descriptor: OwnershipTransferDescriptor = ownershipDescriptor(),
         schemaVersion: Int = 1,
         obligationState: ReleaseObligationState = ReleaseObligationState.PREPARED,
         resourceState: ReleaseResourceState = ReleaseResourceState.CALLER_OWNED,
@@ -112,7 +113,7 @@ class DurableReleaseIntentContractsTest {
         updatedAtMillis: Long = 123456790L,
         payloadHash: String = "sha256:0123456789abcdef",
     ) = DurableReleaseIntent(
-        descriptor = ownershipDescriptor(),
+        descriptor = descriptor,
         schemaVersion = schemaVersion,
         obligationState = obligationState,
         resourceState = resourceState,
