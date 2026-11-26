@@ -6,9 +6,21 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Modifier
-import java.lang.reflect.Modifier
 
 class DurableReleaseIntentContractsTest {
+
+    @Test
+    fun durableIntentHasNoPublicConstructionOrCopyBypass() {
+        assertTrue(DurableReleaseIntent::class.java.constructors.none { Modifier.isPublic(it.modifiers) })
+        assertTrue(DurableReleaseIntent::class.java.methods.none { it.name == "copy" })
+    }
+
+    @Test
+    fun verifiedReleaseProofHasNoPublicConstructionOrCopyBypass() {
+        assertTrue(VerifiedReleaseProof::class.java.constructors.none { Modifier.isPublic(it.modifiers) })
+        assertTrue(VerifiedReleaseProof::class.java.methods.none { it.name == "copy" })
+    }
+
     @Test
     fun preparedIntentPreservesIdentityAndDurableMetadata() {
         val descriptor = ownershipDescriptor()
@@ -83,6 +95,7 @@ class DurableReleaseIntentContractsTest {
                     nextState = ReleaseObligationState.RELEASED,
                     releaseProof = unrelatedProof,
                 ),
+                trustedVerifier(),
             ),
         )
         val released = intent.transition(
@@ -113,6 +126,7 @@ class DurableReleaseIntentContractsTest {
                     nextState = ReleaseObligationState.RELEASED,
                     releaseProof = verifiedProof(),
                 ),
+                trustedVerifier(),
             ),
         )
     }
@@ -288,26 +302,17 @@ class DurableReleaseIntentContractsTest {
         revision: Long = 1L,
         updatedAtMillis: Long = 123456790L,
         payloadHash: String = DurableReleasePayloadHasher.hash(descriptor),
-    ) = if (obligationState == ReleaseObligationState.PREPARED) {
-        DurableReleaseIntent.createPrepared(
-            descriptor = descriptor,
-            schemaVersion = schemaVersion,
-            revision = revision,
-            updatedAtMillis = updatedAtMillis,
-        )
-    } else {
-        DurableReleaseIntent.restore(
-            descriptor = descriptor,
-            schemaVersion = schemaVersion,
-            obligationState = obligationState,
-            resourceState = resourceState,
-            revision = revision,
-            updatedAtMillis = updatedAtMillis,
-            payloadHash = payloadHash,
-            releaseProof = if (obligationState == ReleaseObligationState.RELEASED) verifiedProof(descriptor) else null,
-            proofVerifier = if (obligationState == ReleaseObligationState.RELEASED) trustedVerifier() else null,
-        )
-    }
+    ) = DurableReleaseIntent.restore(
+        descriptor = descriptor,
+        schemaVersion = schemaVersion,
+        obligationState = obligationState,
+        resourceState = resourceState,
+        revision = revision,
+        updatedAtMillis = updatedAtMillis,
+        payloadHash = payloadHash,
+        releaseProof = if (obligationState == ReleaseObligationState.RELEASED) verifiedProof(descriptor) else null,
+        proofVerifier = if (obligationState == ReleaseObligationState.RELEASED) trustedVerifier() else null,
+    )
 
     private fun assertInvalid(block: () -> Unit) {
         try {
