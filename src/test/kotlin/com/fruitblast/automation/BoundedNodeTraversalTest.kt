@@ -168,7 +168,7 @@ internal fun runBoundedNodeTraversalTests() {
             budget = 10L,
             clock = {
                 clockCalls++
-                if (clockCalls >= 8) 10L else 0L
+                if (clockCalls >= 10) 10L else 0L
             },
         )
         check(!result.complete && result.snapshots.isEmpty())
