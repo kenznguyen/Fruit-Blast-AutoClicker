@@ -199,8 +199,17 @@ internal fun runBoundedNodeTraversalTests() {
         check(below.complete && below.snapshots == listOf("leaf"))
 
         for (expiredAt in listOf(10L, 11L)) {
+            var clockCalls = 0
             val access = FakeNodeAccess()
-            val result = scan(FakeNode("leaf"), access, budget = 10L, clock = { expiredAt })
+            val result = scan(
+                FakeNode("leaf"),
+                access,
+                budget = 10L,
+                clock = {
+                    clockCalls++
+                    if (clockCalls == 1) 0L else expiredAt
+                },
+            )
             check(!result.complete && result.snapshots.isEmpty())
             check(access.recycled == listOf("leaf"))
         }
