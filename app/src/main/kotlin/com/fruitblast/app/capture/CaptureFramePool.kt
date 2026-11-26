@@ -349,10 +349,13 @@ class CaptureFramePool<T : Any>(
         val sink = ownershipSink ?: return
         val provider = metadataProvider ?: return
         val shouldPrepare = synchronized(lock) {
-            releases[record.request.releaseId] === record &&
+            val eligible = releases[record.request.releaseId] === record &&
                 record.executionQuiescent &&
                 (record.terminalCallbackObserved || record.retryCount >= MAX_RETRIES) &&
-                record.ownershipState == null
+                record.ownershipState == null &&
+                !record.metadataPreparationAttempted
+            if (eligible) record.metadataPreparationAttempted = true
+            eligible
         }
         if (!shouldPrepare) return
 
@@ -491,6 +494,7 @@ class CaptureFramePool<T : Any>(
         var retryCount: Int = 0,
         var executionQuiescent: Boolean = false,
         var terminalCallbackObserved: Boolean = false,
+        var metadataPreparationAttempted: Boolean = false,
         var transferDescriptor: OwnershipTransferDescriptor? = null,
         var ownershipState: OwnershipState? = null,
     )
