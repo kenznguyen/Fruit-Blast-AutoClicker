@@ -493,11 +493,14 @@ jobs:
               )
               locations = issue.findall("location")
               files = sorted({
-                  location.get("file", "").replace("\\", "/").split("/Fruit-Blast-AutoClicker/")[-1]
+                  location.get("file", "").replace("\\", "/")
                   for location in locations if location.get("file")
               })
-              assert expected_file in files, (
-                  f"F06: {issue_id} expected file {expected_file!r}, got {files!r}"
+              assert any(
+                  actual_file == expected_file or actual_file.endswith("/" + expected_file)
+                  for actual_file in files
+              ), (
+                  f"F06: {issue_id} expected file suffix {expected_file!r}, got {files!r}"
               )
               records.append({
                   "id": issue_id,
