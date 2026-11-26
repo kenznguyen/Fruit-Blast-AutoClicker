@@ -148,7 +148,8 @@ class CaptureFramePool<T : Any>(
         val record = synchronized(lock) {
             nextReleaseId += 1
             ReleaseRecord(
-                FrameReleaseRequest(sessionGeneration, nextReleaseId, value, reason),
+                request = FrameReleaseRequest(sessionGeneration, nextReleaseId, value, reason),
+                state = ReleaseState.DISPATCHING,
             ).also { releases[nextReleaseId] = it }
         }
         dispatch(record)
@@ -158,6 +159,7 @@ class CaptureFramePool<T : Any>(
         val record = synchronized(lock) {
             releases[releaseId]?.takeIf { it.state == ReleaseState.PENDING }?.also {
                 it.retryCount += 1
+                it.state = ReleaseState.DISPATCHING
             }
         } ?: return
         dispatch(record)
@@ -165,8 +167,7 @@ class CaptureFramePool<T : Any>(
 
     private fun dispatch(record: ReleaseRecord<T>) {
         synchronized(lock) {
-            if (record.state != ReleaseState.PENDING) return
-            record.state = ReleaseState.ACTIVE
+            if (record.state != ReleaseState.DISPATCHING) return
         }
         val completionObserved = AtomicBoolean(false)
         val completion: (FrameReleaseCompletion) -> Unit = { outcome ->
@@ -188,6 +189,8 @@ class CaptureFramePool<T : Any>(
                 } else {
                     ReleaseState.PENDING
                 }
+            } else if (current.state == ReleaseState.DISPATCHING) {
+                current.state = ReleaseState.ACTIVE
             }
         }
         notifyDrainObserversIfComplete()
@@ -225,7 +228,7 @@ class CaptureFramePool<T : Any>(
         var retryCount: Int = 0,
     )
 
-    private enum class ReleaseState { PENDING, ACTIVE, FAILED, UNKNOWN }
+    private enum class ReleaseState { PENDING, DISPATCHING, ACTIVE, FAILED, UNKNOWN }
 
     private companion object {
         const val MAX_RETRIES = 3
