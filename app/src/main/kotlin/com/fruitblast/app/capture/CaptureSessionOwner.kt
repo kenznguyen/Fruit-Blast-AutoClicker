@@ -47,14 +47,15 @@ class CaptureSessionOwner<T : Any> {
     }
 
     fun beginConsent(next: CaptureSessionIdentity): CaptureOwnerResult {
+        // Identity reuse is a duplicate regardless of the current lifecycle state.
+        if (next.sessionId in usedSessionIds || next.requestId in usedRequestIds) {
+            return CaptureOwnerResult.Duplicate
+        }
+
         if (state != CaptureSessionState.IDLE &&
             state != CaptureSessionState.STOPPED &&
             state != CaptureSessionState.FAILED
         ) return CaptureOwnerResult.Busy
-
-        if (next.sessionId in usedSessionIds || next.requestId in usedRequestIds) {
-            return CaptureOwnerResult.Duplicate
-        }
 
         usedSessionIds += next.sessionId
         usedRequestIds += next.requestId

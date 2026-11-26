@@ -2,6 +2,7 @@ package com.fruitblast.app.capture
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -47,6 +48,13 @@ class CaptureSessionOwnerTest {
 
     @Test
     fun rejectsInvalidAndReusedSessionIdentity() {
+        assertThrows(IllegalArgumentException::class.java) {
+            CaptureSessionIdentity(0L, "request-invalid")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CaptureSessionIdentity(1L, " ")
+        }
+
         val owner = CaptureSessionOwner<String>()
         assertEquals(CaptureOwnerResult.Prepared, owner.beginConsent(identity()))
         assertEquals(CaptureOwnerResult.Duplicate, owner.beginConsent(identity()))
