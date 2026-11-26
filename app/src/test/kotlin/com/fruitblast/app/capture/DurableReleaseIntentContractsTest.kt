@@ -356,6 +356,46 @@ class DurableReleaseIntentContractsTest {
     }
 
     @Test
+    fun recoveryRejectsReleaseProofThatTrustedVerifierDoesNotAccept() {
+        val prepared = preparedIntent()
+        val forgedProof = verifiedProof(authorityId = "untrusted-authority")
+
+        assertInvalid {
+            DurableReleaseIntent.restore(
+                descriptor = prepared.descriptor,
+                schemaVersion = prepared.schemaVersion,
+                obligationState = ReleaseObligationState.RELEASED,
+                resourceState = ReleaseResourceState.RELEASED,
+                revision = 2L,
+                updatedAtMillis = prepared.updatedAtMillis,
+                payloadHash = prepared.payloadHash,
+                releaseProof = forgedProof,
+                proofVerifier = trustedVerifier(),
+            )
+        }
+    }
+
+    @Test
+    fun verifierExceptionFailsClosedDuringTransition() {
+        val prepared = preparedIntent()
+        val throwingVerifier = ReleaseProofVerifier { _, _ ->
+            throw IllegalStateException("verification unavailable")
+        }
+
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_MISMATCH),
+            prepared.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                    releaseProof = verifiedProof(),
+                ),
+                throwingVerifier,
+            ),
+        )
+    }
+
+    @Test
     fun commitPolicyRequiresRecoveryEvidenceAndNeverAuthorizesResourceRelease() {
         assertEquals(
             DurableLedgerCommitDecision.Committed,

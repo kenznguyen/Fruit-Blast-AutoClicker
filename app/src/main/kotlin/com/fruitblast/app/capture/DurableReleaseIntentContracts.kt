@@ -38,7 +38,7 @@ enum class ReleaseResourceState {
  * This interface is not itself proof of authenticity. The verifier supplied by the
  * trusted composition root must authenticate the authority/evidence pair.
  */
-interface ReleaseProof {
+internal interface ReleaseProof {
     val descriptor: OwnershipTransferDescriptor
     val authorityId: String
     val evidenceId: String
@@ -87,13 +87,13 @@ internal fun interface ReleaseProofVerifier {
 }
 
 /** A requested state transition with an optimistic revision precondition. */
-data class ReleaseIntentTransition(
+internal data class ReleaseIntentTransition(
     val expectedRevision: Long,
     val nextState: ReleaseObligationState,
     val releaseProof: ReleaseProof? = null,
 )
 
-enum class ReleaseIntentTransitionRejection {
+internal enum class ReleaseIntentTransitionRejection {
     STALE_REVISION,
     INVALID_STATE_TRANSITION,
     RELEASE_PROOF_REQUIRED,
@@ -101,7 +101,7 @@ enum class ReleaseIntentTransitionRejection {
     REVISION_OVERFLOW,
 }
 
-sealed interface ReleaseIntentTransitionResult {
+internal sealed interface ReleaseIntentTransitionResult {
     data class Applied(val intent: DurableReleaseIntent) : ReleaseIntentTransitionResult
     data class Idempotent(val intent: DurableReleaseIntent) : ReleaseIntentTransitionResult
     data class Rejected(val reason: ReleaseIntentTransitionRejection) : ReleaseIntentTransitionResult
