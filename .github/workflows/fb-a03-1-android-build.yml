@@ -266,17 +266,56 @@ jobs:
           assert instrumentation.get(ANDROID + "name") == "androidx.test.runner.AndroidJUnitRunner"
 
           compiled = ET.parse("verification-logs/accessibility-compiled.xml").getroot()
-          expected = {
-              "accessibilityEventTypes": "typeWindowStateChanged|typeWindowsChanged",
-              "accessibilityFeedbackType": "feedbackGeneric",
-              "canRetrieveWindowContent": "true",
-              "notificationTimeout": "100",
-          }
-          for key, value in expected.items():
-              actual = compiled.get(ANDROID + key)
-              assert actual == value, (
-                  f"Compiled AccessibilityService XML {key}: expected {value!r}, got {actual!r}"
-              )
+          def parse_flags(value, symbolic_values, attribute):
+              value = value.strip()
+              if value.lower().startswith("0x") or value.isdigit():
+                  return int(value, 0)
+              result = 0
+              for name in value.split("|"):
+                  name = name.strip()
+                  assert name in symbolic_values, (
+                      f"Unknown {attribute} symbolic value: {name!r}"
+                  )
+                  result |= symbolic_values[name]
+              return result
+
+          actual_events = compiled.get(ANDROID + "accessibilityEventTypes")
+          assert actual_events is not None, "Compiled accessibilityEventTypes missing"
+          expected_events = 0x20 | 0x400000
+          parsed_events = parse_flags(
+              actual_events,
+              {
+                  "typeWindowStateChanged": 0x20,
+                  "typeWindowsChanged": 0x400000,
+              },
+              "accessibilityEventTypes",
+          )
+          assert parsed_events == expected_events, (
+              f"Compiled accessibilityEventTypes: expected mask 0x{expected_events:x}, "
+              f"got {actual_events!r} (0x{parsed_events:x})"
+          )
+
+          actual_feedback = compiled.get(ANDROID + "accessibilityFeedbackType")
+          assert actual_feedback is not None, "Compiled accessibilityFeedbackType missing"
+          parsed_feedback = parse_flags(
+              actual_feedback,
+              {"feedbackGeneric": 0x10},
+              "accessibilityFeedbackType",
+          )
+          assert parsed_feedback == 0x10, (
+              f"Compiled accessibilityFeedbackType: expected feedbackGeneric (0x10), "
+              f"got {actual_feedback!r}"
+          )
+
+          actual_retrieve = compiled.get(ANDROID + "canRetrieveWindowContent")
+          assert actual_retrieve is not None and actual_retrieve.lower() == "true", (
+              f"Compiled canRetrieveWindowContent: expected true, got {actual_retrieve!r}"
+          )
+
+          actual_timeout = compiled.get(ANDROID + "notificationTimeout")
+          assert actual_timeout is not None and int(actual_timeout, 0) == 100, (
+              f"Compiled notificationTimeout: expected 100, got {actual_timeout!r}"
+          )
 
           def component_names(manifest):
               app = manifest.find("application")
