@@ -211,4 +211,48 @@ class CaptureFramePoolTest {
         pool.close()
     }
 
+
+    @Test
+    fun retriesOnlyConfirmedRejectionsAndStopsAfterThreeRetries() {
+        var dispatchAttempts = 0
+        val handler = object : FrameReleaseHandler<String> {
+            override fun dispatch(
+                request: FrameReleaseRequest<String>,
+                completion: (FrameReleaseCompletion) -> Unit,
+            ): ReleaseDispatchResult {
+                dispatchAttempts += 1
+                return ReleaseDispatchResult.REJECTED_NOT_ACCEPTED
+            }
+        }
+        val pool = CaptureFramePool(releaseHandler = handler)
+
+        pool.offerLatest("old-frame")
+        pool.offerLatest("new-frame")
+        repeat(3) { pool.retryPendingReleases() }
+
+        assertEquals(4, dispatchAttempts)
+        assertEquals(0, pool.snapshot().pendingReleaseCount)
+        assertEquals(1, pool.snapshot().unresolvedReleaseCount)
+    }
+
+    @Test
+    fun acceptedReleaseCompletionResolvesTheReleaseObligation() {
+        val handler = object : FrameReleaseHandler<String> {
+            override fun dispatch(
+                request: FrameReleaseRequest<String>,
+                completion: (FrameReleaseCompletion) -> Unit,
+            ): ReleaseDispatchResult {
+                completion(FrameReleaseCompletion.RELEASED)
+                return ReleaseDispatchResult.ACCEPTED
+            }
+        }
+        val pool = CaptureFramePool(releaseHandler = handler)
+
+        pool.offerLatest("old-frame")
+        pool.offerLatest("new-frame")
+
+        assertEquals(0, pool.snapshot().unresolvedReleaseCount)
+        assertEquals(1, pool.snapshot().completedReleaseCount)
+    }
+
 }
