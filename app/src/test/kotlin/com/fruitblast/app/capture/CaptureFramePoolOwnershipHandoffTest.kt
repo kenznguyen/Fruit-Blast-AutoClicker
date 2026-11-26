@@ -84,7 +84,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         metadata: FixedMetadataProvider = FixedMetadataProvider(),
         releaseHandler: FrameReleaseHandler<String> = handler(),
         generation: Long = 42L,
-    ) = CaptureFramePool(
+    ): CaptureFramePool<String> = CaptureFramePool<String>(
         releaseHandler = releaseHandler,
         sessionGeneration = generation,
         ownershipSink = sink,
