@@ -208,6 +208,120 @@ jobs:
           print("PASS: source AccessibilityService XML configuration")
           PY
 
+      - name: Verify offline P0 APK identity, compiled Accessibility XML and integrity
+        id: offline_p0
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROD_APK="app/build/outputs/apk/debug/app-debug.apk"
+          TEST_APK="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools"
+          APKSIGNER="$(find "$BUILD_TOOLS" -mindepth 2 -maxdepth 2 -type f -name apksigner | sort -V | tail -n 1)"
+
+          test -x "$ANALYZER"
+          test -x "$APKSIGNER"
+          test -s "$PROD_APK"
+          test -s "$TEST_APK"
+
+          {
+            echo "Production application ID: $("$ANALYZER" manifest application-id "$PROD_APK")"
+            echo "Production min SDK: $("$ANALYZER" manifest min-sdk "$PROD_APK")"
+            echo "Production target SDK: $("$ANALYZER" manifest target-sdk "$PROD_APK")"
+          } | tee verification-logs/offline-p0-identity.txt
+
+          "$ANALYZER" resources xml --file res/xml/fruit_blast_accessibility_service.xml "$PROD_APK" \
+            > verification-logs/accessibility-compiled.xml
+
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import xml.etree.ElementTree as ET
+
+          ANDROID = "{http://schemas.android.com/apk/res/android}"
+          PROD_APK = "app/build/outputs/apk/debug/app-debug.apk"
+          TEST_APK = "app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          ANALYZER = os.path.join(os.environ["ANDROID_HOME"], "cmdline-tools", "latest", "bin", "apkanalyzer")
+
+          def analyzer(*args):
+              return subprocess.run(
+                  [ANALYZER, *args], check=True, capture_output=True, text=True
+              ).stdout.strip()
+
+          assert analyzer("manifest", "application-id", PROD_APK) == "com.fruitblast.autoclicker"
+          assert analyzer("manifest", "min-sdk", PROD_APK) == "23"
+          assert analyzer("manifest", "target-sdk", PROD_APK) == "35"
+
+          production = ET.parse("verification-logs/production-manifest.xml").getroot()
+          test_manifest = ET.parse("verification-logs/instrumentation-manifest.xml").getroot()
+          assert production.get("package") == "com.fruitblast.autoclicker", (
+              f"Unexpected production manifest package: {production.get('package')!r}"
+          )
+          assert test_manifest.get("package") == "com.fruitblast.autoclicker.test", (
+              f"Unexpected instrumentation package: {test_manifest.get('package')!r}"
+          )
+          instrumentation = test_manifest.find("instrumentation")
+          assert instrumentation is not None, "Instrumentation declaration missing"
+          assert instrumentation.get(ANDROID + "targetPackage") == "com.fruitblast.autoclicker"
+          assert instrumentation.get(ANDROID + "name") == "androidx.test.runner.AndroidJUnitRunner"
+
+          compiled = ET.parse("verification-logs/accessibility-compiled.xml").getroot()
+          expected = {
+              "accessibilityEventTypes": "typeWindowStateChanged|typeWindowsChanged",
+              "accessibilityFeedbackType": "feedbackGeneric",
+              "canRetrieveWindowContent": "true",
+              "notificationTimeout": "100",
+          }
+          for key, value in expected.items():
+              actual = compiled.get(ANDROID + key)
+              assert actual == value, (
+                  f"Compiled AccessibilityService XML {key}: expected {value!r}, got {actual!r}"
+              )
+
+          def component_names(manifest):
+              app = manifest.find("application")
+              assert app is not None, "Manifest application element missing"
+              names = set()
+              for tag in ("activity", "activity-alias", "service", "receiver", "provider"):
+                  for node in app.findall(tag):
+                      name = node.get(ANDROID + "name")
+                      if not name:
+                          continue
+                      if name.startswith("."):
+                          name = manifest.get("package", "") + name
+                      elif "." not in name:
+                          name = manifest.get("package", "") + "." + name
+                      names.add(name)
+              return names
+
+          production_components = component_names(production)
+          instrumentation_components = component_names(test_manifest)
+          leaked = production_components.intersection(instrumentation_components)
+          assert not leaked, f"Instrumentation-only components leaked into production APK: {sorted(leaked)}"
+
+          fixture = "com.fruitblast.app.automation.AccessibilityNodeFixtureActivity"
+          assert fixture in instrumentation_components, "Expected instrumentation fixture is missing"
+          assert fixture not in production_components, "Instrumentation fixture leaked into production APK"
+
+          print("PASS: F04 compiled AccessibilityService XML values")
+          print("PASS: F05 production/test package identity, SDK levels and instrumentation runner")
+          print("PASS: F05 instrumentation component isolation across activity, activity-alias, service, receiver and provider")
+          PY
+
+          for APK in "$PROD_APK" "$TEST_APK"; do
+            LABEL="$(basename "$APK" .apk)"
+            unzip -t "$APK" > "verification-logs/$LABEL-zip-test.txt"
+            "$APKSIGNER" verify --verbose --print-certs "$APK" \
+              > "verification-logs/$LABEL-signature.txt" 2>&1
+          done
+
+          {
+            echo "PASS: production APK archive integrity"
+            echo "PASS: instrumentation APK archive integrity"
+            echo "PASS: production APK signature verification"
+            echo "PASS: instrumentation APK signature verification"
+          } | tee verification-logs/offline-p0-integrity.txt
+
       - name: Create verification summary and checksums
         if: always()
         shell: bash
@@ -217,10 +331,11 @@ jobs:
           INSTRUMENTATION_OUTCOME: ${{ steps.instrumentation.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           MANIFEST_OUTCOME: ${{ steps.manifests.outcome }}
+          OFFLINE_P0_OUTCOME: ${{ steps.offline_p0.outcome }}
         run: |
           mkdir -p verification-logs
           {
-            echo "F06-C-2 Offline Android Verification"
+            echo "F06-C-5 Offline P0 Android Verification"
             echo "Repository: ${GITHUB_REPOSITORY}"
             echo "Branch: ${GITHUB_REF_NAME}"
             echo "Commit: ${GITHUB_SHA}"
@@ -230,6 +345,7 @@ jobs:
             echo "Instrumentation APK compile: ${INSTRUMENTATION_OUTCOME:-not_run}"
             echo "Lint: ${LINT_OUTCOME:-not_run}"
             echo "Manifest/configuration assertions: ${MANIFEST_OUTCOME:-not_run}"
+            echo "Offline P0 APK identity/compiled XML/integrity assertions: ${OFFLINE_P0_OUTCOME:-not_run}"
             echo "Runtime instrumentation tests: NOT RUN (offline tier)"
             echo "Emulator/device tests: NOT RUN"
           } | tee verification-logs/verification-summary.txt
@@ -247,6 +363,7 @@ jobs:
           done
           if [ "${#files[@]}" -gt 0 ]; then
             sha256sum "${files[@]}" > verification-logs/SHA256SUMS.txt
+            find verification-logs -type f ! -name SHA256SUMS.txt -print0 | sort -z | xargs -0 -r sha256sum >> verification-logs/SHA256SUMS.txt
           fi
 
       - name: Upload offline verification artifacts
