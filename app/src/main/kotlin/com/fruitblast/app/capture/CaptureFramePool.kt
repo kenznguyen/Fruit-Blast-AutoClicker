@@ -1,7 +1,6 @@
 package com.fruitblast.app.capture
 
 import java.io.Closeable
-import java.util.concurrent.atomic.AtomicBoolean
 
 class CaptureFramePool<T : Any>(
     private val releaseHandler: FrameReleaseHandler<T>,
@@ -269,9 +268,7 @@ class CaptureFramePool<T : Any>(
         synchronized(lock) {
             if (record.releaseState != ReleaseState.DISPATCHING) return
         }
-        val completionObserved = AtomicBoolean(false)
         val completion: (FrameReleaseCompletion) -> Unit = { outcome ->
-            completionObserved.set(true)
             completeRelease(record.request.releaseId, outcome, callbackConfirmedQuiescence = true)
         }
         val result = try {
@@ -285,26 +282,16 @@ class CaptureFramePool<T : Any>(
             return
         }
 
-        var becameQuiescentRejection = false
         synchronized(lock) {
             val current = releases[record.request.releaseId] ?: return@synchronized
             if (current.releaseState != ReleaseState.DISPATCHING) return@synchronized
 
             if (result == ReleaseDispatchResult.REJECTED_NOT_ACCEPTED) {
-                current.releaseState = if (completionObserved.get()) {
-                    ReleaseState.UNKNOWN
-                } else {
-                    current.executionQuiescent = true
-                    becameQuiescentRejection = true
-                    ReleaseState.PENDING
-                }
+                current.releaseState = ReleaseState.PENDING
+                current.executionQuiescent = true
             } else {
                 current.releaseState = ReleaseState.ACTIVE
             }
-        }
-        if (becameQuiescentRejection) {
-            // A rejected dispatch is known not to have started execution. It is
-            // eligible for handoff only after the bounded release retry budget.
         }
         notifyDrainObserversIfComplete()
     }
