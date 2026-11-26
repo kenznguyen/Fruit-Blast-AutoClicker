@@ -544,4 +544,41 @@ class CaptureFramePoolOwnershipHandoffTest {
         assertEquals(0, pool.snapshot().unresolvedReleaseCount)
     }
 
+
+    @Test fun unknownReleaseThenContractViolationReportsContractViolationToDrainObserver() {
+        val sink = RecordingSink(OwnershipTransferResult.CONTRACT_VIOLATION)
+        val pool = pool(
+            sink,
+            releaseHandler = handler(outcome = FrameReleaseCompletion.UNKNOWN),
+        )
+        var drainResult: CaptureDrainResult? = null
+        pool.offerLatest("resource")
+        pool.observeDrain { drainResult = it }
+
+        pool.close()
+
+        assertEquals(CaptureDrainResult.OWNERSHIP_CONTRACT_VIOLATION, drainResult)
+        assertEquals(1, pool.snapshot().unresolvedOwnershipTransferCount)
+        pool.retryRejectedOwnershipTransfers()
+        assertEquals(1, sink.descriptors.size)
+    }
+
+    @Test fun failedReleaseThenContractViolationReportsContractViolationToDrainObserver() {
+        val sink = RecordingSink(OwnershipTransferResult.CONTRACT_VIOLATION)
+        val pool = pool(
+            sink,
+            releaseHandler = handler(outcome = FrameReleaseCompletion.FAILED),
+        )
+        var drainResult: CaptureDrainResult? = null
+        pool.offerLatest("resource")
+        pool.observeDrain { drainResult = it }
+
+        pool.close()
+
+        assertEquals(CaptureDrainResult.OWNERSHIP_CONTRACT_VIOLATION, drainResult)
+        assertEquals(1, pool.snapshot().unresolvedOwnershipTransferCount)
+        pool.retryRejectedOwnershipTransfers()
+        assertEquals(1, sink.descriptors.size)
+    }
+
 }
