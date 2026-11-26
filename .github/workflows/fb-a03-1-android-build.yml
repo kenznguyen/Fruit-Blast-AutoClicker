@@ -361,6 +361,179 @@ jobs:
             echo "PASS: instrumentation APK signature verification"
           } | tee verification-logs/offline-p0-integrity.txt
 
+      - name: Verify F01 compiled instrumentation test class and methods
+        id: offline_f01
+        shell: bash
+        run: |
+          set -euo pipefail
+          TEST_APK="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          CLASS="com.fruitblast.app.automation.AccessibilityNodeObserverInstrumentationTest"
+          test -s "$TEST_APK"
+          "$ANALYZER" dex code --class "$CLASS" "$TEST_APK" > verification-logs/f01-instrumentation-test-class.dex.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          dex_dump = Path("verification-logs/f01-instrumentation-test-class.dex.txt").read_text()
+          expected_methods = {
+              "observesFrameworkNodeTreeAndClassifiesCloseControl",
+              "nodeBudgetOverflowReturnsUnknownWithoutPartialClassification",
+              "depthBudgetOverflowReturnsUnknownWithoutPartialClassification",
+              "elapsedTimeBudgetOverflowReturnsUnknownWithoutPartialClassification",
+              "nullRootReturnsUnknown",
+              "repeatedObservationsUseFreshFrameworkNodes",
+          }
+          missing = sorted(name for name in expected_methods if not re.search(r"\b" + re.escape(name) + r"\b", dex_dump))
+          assert not missing, f"Compiled instrumentation test methods missing from test APK DEX: {missing}"
+          assert "AccessibilityNodeObserverInstrumentationTest" in dex_dump, "Instrumentation test class missing from DEX output"
+          print(f"PASS: F01 instrumentation test class and {len(expected_methods)} expected @Test methods are compiled into the test APK")
+          print("BOUNDARY: APK compilation only; no instrumentation test method was executed")
+          PY
+
+      - name: Verify F02 AccessibilityService lifecycle source contract
+        id: offline_f02
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source_path = Path("app/src/main/kotlin/com/fruitblast/app/automation/FruitBlastAccessibilityService.kt")
+          source = source_path.read_text()
+
+          assert re.search(r"class\s+FruitBlastAccessibilityService\s*:\s*AccessibilityService\s*\(", source), (
+              "F02: service must remain an AccessibilityService subclass"
+          )
+
+          def method_body(signature_pattern, label):
+              match = re.search(signature_pattern, source)
+              assert match, f"F02: missing callback declaration {label}"
+              opening = source.find("{", match.end())
+              assert opening >= 0, f"F02: callback {label} has no body"
+              depth = 0
+              for index in range(opening, len(source)):
+                  if source[index] == "{":
+                      depth += 1
+                  elif source[index] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          return source[opening + 1:index]
+              raise AssertionError(f"F02: unterminated callback body {label}")
+
+          event_body = method_body(r"override\s+fun\s+onAccessibilityEvent\s*\(\s*event\s*:\s*AccessibilityEvent\s*\)", "onAccessibilityEvent")
+          interrupt_body = method_body(r"override\s+fun\s+onInterrupt\s*\(\s*\)", "onInterrupt")
+          destroy_body = method_body(r"override\s+fun\s+onDestroy\s*\(\s*\)", "onDestroy")
+
+          assert "lastWindowEventPackage = null" in interrupt_body, "F02: onInterrupt must invalidate cached event package"
+          assert "lastWindowEventPackage = null" in destroy_body, "F02: onDestroy must invalidate cached event package"
+          assert re.search(r"\bsuper\.onDestroy\s*\(\s*\)", destroy_body), "F02: onDestroy must call super.onDestroy()"
+
+          checks = {
+              "service_subclass": True,
+              "onAccessibilityEvent_callback": "event.eventType" in event_body,
+              "onInterrupt_cache_invalidation": "lastWindowEventPackage = null" in interrupt_body,
+              "onDestroy_cache_invalidation": "lastWindowEventPackage = null" in destroy_body,
+              "onDestroy_super_call": bool(re.search(r"\bsuper\.onDestroy\s*\(\s*\)", destroy_body)),
+          }
+          assert all(checks.values()), f"F02: lifecycle source contract failed: {checks}"
+          import json
+          Path("verification-logs/f02-lifecycle-source-assertions.json").write_text(
+              json.dumps({"status": "PASS", "assertions": checks, "verification_tier": "static source only"}, indent=2) + "\n"
+          )
+          print("PASS: F02 AccessibilityService subclass, event callback, interrupt/destroy cache invalidation and superclass destroy call")
+          print("BOUNDARY: static source assertions only; Android lifecycle callbacks were not invoked")
+          PY
+
+      - name: Verify F06 lint warning allowlist and emit triage report
+        id: offline_f06
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          report = Path("app/build/reports/lint-results-debug.xml")
+          root = ET.parse(report).getroot()
+          expected = {
+              "OldTargetApi": ("app/build.gradle.kts", "Warning"),
+              "AndroidGradlePluginVersion": ("gradle/wrapper/gradle-wrapper.properties", "Warning"),
+              "SwitchIntDef": ("app/src/main/kotlin/com/fruitblast/app/automation/FruitBlastAccessibilityService.kt", "Warning"),
+              "DataExtractionRules": ("app/src/main/AndroidManifest.xml", "Warning"),
+              "MissingApplicationIcon": ("app/src/main/AndroidManifest.xml", "Warning"),
+          }
+          issues = root.findall(".//issue")
+          actual_ids = [issue.get("id") for issue in issues]
+          errors = [
+              issue for issue in issues
+              if (issue.get("severity") or "").lower() in {"error", "fatal"}
+          ]
+          warnings = [issue for issue in issues if (issue.get("severity") or "").lower() == "warning"]
+          assert not errors, [
+              {"id": item.get("id"), "severity": item.get("severity"), "message": item.get("message")}
+              for item in errors
+          ]
+          assert len(warnings) == len(expected), (
+              f"F06: expected exactly {len(expected)} known warnings, got {len(warnings)}"
+          )
+          assert len(issues) == len(expected), (
+              f"F06: unexpected non-warning lint issues present: {len(issues)} total issues"
+          )
+
+          records = []
+          for issue in warnings:
+              issue_id = issue.get("id")
+              assert issue_id in expected, f"F06: unexpected lint warning ID {issue_id!r}"
+              expected_file, expected_severity = expected[issue_id]
+              assert issue.get("severity") == expected_severity, (
+                  f"F06: {issue_id} severity expected {expected_severity}, got {issue.get('severity')!r}"
+              )
+              locations = issue.findall("location")
+              files = sorted({
+                  location.get("file", "").replace("\\", "/").split("/Fruit-Blast-AutoClicker/")[-1]
+                  for location in locations if location.get("file")
+              })
+              assert expected_file in files, (
+                  f"F06: {issue_id} expected file {expected_file!r}, got {files!r}"
+              )
+              records.append({
+                  "id": issue_id,
+                  "severity": issue.get("severity"),
+                  "file": expected_file,
+                  "line": [
+                      location.find("attribute").get("value")
+                      for location in locations
+                      if location.find("attribute") is not None
+                      and location.find("attribute").get("name") == "line"
+                  ],
+                  "message": issue.get("message", ""),
+                  "status": "OPEN — triaged, not modified or accepted",
+                  "proposed_action": "Review separately; no source/configuration change in F06-C-6",
+              })
+
+          assert set(actual_ids) == set(expected), (
+              f"F06: lint issue set mismatch, expected {sorted(expected)}, got {sorted(actual_ids)}"
+          )
+          records.sort(key=lambda item: item["id"])
+          output = {
+              "status": "PASS",
+              "lint_tool_version": root.get("by"),
+              "expected_warning_count": len(expected),
+              "actual_warning_count": len(warnings),
+              "error_fatal_count": len(errors),
+              "warnings": records,
+              "policy": "Fail on any new/missing warning ID, severity drift, file drift, or Error/Fatal finding",
+              "scope_boundary": "Triage assertions only; warnings remain open and no lint/source fixes are applied",
+          }
+          Path("verification-logs/f06-lint-triage.json").write_text(json.dumps(output, indent=2) + "\n")
+          print(f"PASS: F06 exact lint allowlist ({len(warnings)} known warnings); zero Error/Fatal; no unexpected issues")
+          for item in records:
+              print(f"OPEN: {item['id']} [{item['severity']}] {item['file']}: {item['message']}")
+          PY
+
       - name: Create verification summary and checksums
         if: always()
         shell: bash
@@ -371,6 +544,9 @@ jobs:
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           MANIFEST_OUTCOME: ${{ steps.manifests.outcome }}
           OFFLINE_P0_OUTCOME: ${{ steps.offline_p0.outcome }}
+          OFFLINE_F01_OUTCOME: ${{ steps.offline_f01.outcome }}
+          OFFLINE_F02_OUTCOME: ${{ steps.offline_f02.outcome }}
+          OFFLINE_F06_OUTCOME: ${{ steps.offline_f06.outcome }}
         run: |
           mkdir -p verification-logs
           {
@@ -385,6 +561,10 @@ jobs:
             echo "Lint: ${LINT_OUTCOME:-not_run}"
             echo "Manifest/configuration assertions: ${MANIFEST_OUTCOME:-not_run}"
             echo "Offline P0 APK identity/compiled XML/integrity assertions: ${OFFLINE_P0_OUTCOME:-not_run}"
+            echo "F01 instrumentation test class/method compilation assertions: ${OFFLINE_F01_OUTCOME:-not_run} (execution NOT RUN)"
+            echo "F02 AccessibilityService lifecycle source assertions: ${OFFLINE_F02_OUTCOME:-not_run} (static only)"
+            echo "F06 lint warning allowlist/triage assertions: ${OFFLINE_F06_OUTCOME:-not_run} (warnings remain OPEN)"
+            echo "F03 Binder/recovery runtime: NOT RUN (separate scope)"
             echo "Runtime instrumentation tests: NOT RUN (offline tier)"
             echo "Emulator/device tests: NOT RUN"
           } | tee verification-logs/verification-summary.txt
