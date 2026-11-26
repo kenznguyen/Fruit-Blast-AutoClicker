@@ -466,6 +466,14 @@ class CaptureFramePool<T : Any>(
                         it.releaseState == ReleaseState.PENDING ||
                             it.releaseState == ReleaseState.DISPATCHING ||
                             it.releaseState == ReleaseState.ACTIVE
+                    } && releases.values.any {
+                        it.ownershipState == OwnershipState.CONTRACT_VIOLATION
+                    } -> CaptureDrainResult.OWNERSHIP_CONTRACT_VIOLATION
+                closed && frame == null && !leaseOutstanding &&
+                    releases.values.none {
+                        it.releaseState == ReleaseState.PENDING ||
+                            it.releaseState == ReleaseState.DISPATCHING ||
+                            it.releaseState == ReleaseState.ACTIVE
                     } && releases.values.any { it.releaseState == ReleaseState.FAILED } ->
                     CaptureDrainResult.RELEASE_FAILED
                 closed && frame == null && !leaseOutstanding &&
@@ -477,14 +485,6 @@ class CaptureFramePool<T : Any>(
                         it.releaseState == ReleaseState.UNKNOWN ||
                             it.ownershipState == OwnershipState.UNKNOWN
                     } -> CaptureDrainResult.RELEASE_UNKNOWN
-                closed && frame == null && !leaseOutstanding &&
-                    releases.values.none {
-                        it.releaseState == ReleaseState.PENDING ||
-                            it.releaseState == ReleaseState.DISPATCHING ||
-                            it.releaseState == ReleaseState.ACTIVE
-                    } && releases.values.any {
-                        it.ownershipState == OwnershipState.CONTRACT_VIOLATION
-                    } -> CaptureDrainResult.OWNERSHIP_CONTRACT_VIOLATION
                 else -> null
             } ?: return
             drainObservers.toList().also { drainObservers.clear() } to result
