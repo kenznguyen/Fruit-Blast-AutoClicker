@@ -214,7 +214,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         assertNotNull(callback)
     }
 
-    @Test fun registryCustodyPreventsPoolReleaseCallbackAfterCommit() {
+    @Test fun poolCloseTransfersOnlyTheRemainingSlotAfterFirstTransferCommits() {
         val sink = RecordingSink(OwnershipTransferResult.ACCEPTED)
         var releaseCount = 0
         val pool = pool(sink, releaseHandler = handler(
@@ -222,9 +222,13 @@ class CaptureFramePoolOwnershipHandoffTest {
             attempts = { releaseCount++ },
         ))
         triggerRelease(pool)
+        assertEquals(listOf("resource"), sink.resources)
+
         pool.close()
-        assertEquals(1, releaseCount)
-        assertEquals(1, sink.resources.size)
+
+        assertEquals(2, releaseCount)
+        assertEquals(listOf("resource", "replacement"), sink.resources)
+        assertEquals(2, sink.descriptors.map { it.transferId }.distinct().size)
     }
 
     @Test fun duplicateReconciliationDoesNotCreateSecondTransferObligation() {
@@ -415,7 +419,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         triggerRelease(pool)
         pool.close()
         assertTrue(sink.resources.isEmpty())
-        assertEquals(1, pool.snapshot().activeReleaseCount)
+        assertEquals(2, pool.snapshot().activeReleaseCount)
     }
 
     @Test fun legacyConstructorRetainsExistingReleaseBehavior() {
