@@ -6,6 +6,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.lang.reflect.Modifier
+import java.lang.reflect.Modifier
 
 class DurableReleaseIntentContractsTest {
     @Test
@@ -84,22 +85,17 @@ class DurableReleaseIntentContractsTest {
                 ),
             ),
         )
-        assertEquals(
-            ReleaseIntentTransitionResult.Applied(
-                intent.copy(
-                    obligationState = ReleaseObligationState.RELEASED,
-                    resourceState = ReleaseResourceState.RELEASED,
-                    revision = 2L,
-                ),
+        val released = intent.transition(
+            ReleaseIntentTransition(
+                expectedRevision = 1L,
+                nextState = ReleaseObligationState.RELEASED,
+                releaseProof = verifiedProof(),
             ),
-            intent.transition(
-                ReleaseIntentTransition(
-                    expectedRevision = 1L,
-                    nextState = ReleaseObligationState.RELEASED,
-                    releaseProof = verifiedProof(),
-                ),
-            ),
-        )
+            trustedVerifier(),
+        ) as ReleaseIntentTransitionResult.Applied
+        assertEquals(ReleaseObligationState.RELEASED, released.intent.obligationState)
+        assertEquals(ReleaseResourceState.RELEASED, released.intent.resourceState)
+        assertEquals(2L, released.intent.revision)
     }
 
     @Test
@@ -206,7 +202,16 @@ class DurableReleaseIntentContractsTest {
             ),
         )
 
-        val maxRevision = prepared.copy(revision = Long.MAX_VALUE)
+        val maxRevision = DurableReleaseIntent.restore(
+            descriptor = prepared.descriptor,
+            schemaVersion = prepared.schemaVersion,
+            obligationState = prepared.obligationState,
+            resourceState = prepared.resourceState,
+            revision = Long.MAX_VALUE,
+            updatedAtMillis = prepared.updatedAtMillis,
+            payloadHash = prepared.payloadHash,
+            payloadFormatVersion = prepared.payloadFormatVersion,
+        )
         assertEquals(
             ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.REVISION_OVERFLOW),
             maxRevision.transition(
@@ -256,11 +261,19 @@ class DurableReleaseIntentContractsTest {
 
     private fun verifiedProof(
         descriptor: OwnershipTransferDescriptor = ownershipDescriptor(),
-    ) = VerifiedReleaseProof(
+        authorityId: String = "capture-release-authority",
+        evidenceId: String = "release-event:13",
+    ) = VerifiedReleaseProof.issuedByAuthority(
         descriptor = descriptor,
-        authorityId = "capture-release-authority",
-        evidenceId = "release-event:13",
+        authorityId = authorityId,
+        evidenceId = evidenceId,
     )
+
+    private fun trustedVerifier() = ReleaseProofVerifier { proof, descriptor ->
+        proof.descriptor == descriptor &&
+            proof.authorityId == "capture-release-authority" &&
+            proof.evidenceId.startsWith("release-event:")
+    }
 
     private fun preparedIntent(
         descriptor: OwnershipTransferDescriptor = ownershipDescriptor(),
@@ -275,15 +288,26 @@ class DurableReleaseIntentContractsTest {
         revision: Long = 1L,
         updatedAtMillis: Long = 123456790L,
         payloadHash: String = DurableReleasePayloadHasher.hash(descriptor),
-    ) = DurableReleaseIntent(
-        descriptor = descriptor,
-        schemaVersion = schemaVersion,
-        obligationState = obligationState,
-        resourceState = resourceState,
-        revision = revision,
-        updatedAtMillis = updatedAtMillis,
-        payloadHash = payloadHash,
-    )
+    ) = if (obligationState == ReleaseObligationState.PREPARED) {
+        DurableReleaseIntent.createPrepared(
+            descriptor = descriptor,
+            schemaVersion = schemaVersion,
+            revision = revision,
+            updatedAtMillis = updatedAtMillis,
+        )
+    } else {
+        DurableReleaseIntent.restore(
+            descriptor = descriptor,
+            schemaVersion = schemaVersion,
+            obligationState = obligationState,
+            resourceState = resourceState,
+            revision = revision,
+            updatedAtMillis = updatedAtMillis,
+            payloadHash = payloadHash,
+            releaseProof = if (obligationState == ReleaseObligationState.RELEASED) verifiedProof(descriptor) else null,
+            proofVerifier = if (obligationState == ReleaseObligationState.RELEASED) trustedVerifier() else null,
+        )
+    }
 
     private fun assertInvalid(block: () -> Unit) {
         try {
@@ -294,32 +318,81 @@ class DurableReleaseIntentContractsTest {
         }
     }
     @Test
-    fun durableIntentHasNoPublicConstructionOrCopyBypass() {
-        assertTrue(
-            "DurableReleaseIntent must expose only controlled factories",
-            DurableReleaseIntent::class.java.constructors.none { Modifier.isPublic(it.modifiers) },
+    fun durableIntentFactoriesAndProofVerificationFailClosed() {
+        val prepared = DurableReleaseIntent.createPrepared(
+            descriptor = ownershipDescriptor(),
+            updatedAtMillis = 123456790L,
         )
-        assertTrue(
-            "DurableReleaseIntent must not expose a data-class copy bypass",
-            DurableReleaseIntent::class.java.methods.none { it.name == "copy" },
+        assertEquals(ReleaseObligationState.PREPARED, prepared.obligationState)
+
+        assertInvalid {
+            DurableReleaseIntent.restore(
+                descriptor = prepared.descriptor,
+                schemaVersion = 1,
+                obligationState = ReleaseObligationState.RELEASED,
+                resourceState = ReleaseResourceState.RELEASED,
+                revision = 2L,
+                updatedAtMillis = prepared.updatedAtMillis,
+                payloadHash = prepared.payloadHash,
+            )
+        }
+
+        val forgedProof = verifiedProof(authorityId = "untrusted-authority")
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_MISMATCH),
+            prepared.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                    releaseProof = forgedProof,
+                ),
+                trustedVerifier(),
+            ),
         )
     }
 
     @Test
-    fun verifiedReleaseProofHasNoPublicConstructionOrCopyBypass() {
-        assertTrue(
-            "VerifiedReleaseProof must expose no public constructor",
-            VerifiedReleaseProof::class.java.constructors.none { Modifier.isPublic(it.modifiers) },
+    fun commitPolicyRequiresRecoveryEvidenceAndNeverAuthorizesResourceRelease() {
+        assertEquals(
+            DurableLedgerCommitDecision.Committed,
+            DurableReleaseIntentDecisionPolicy.resolveCommit(DurableLedgerCommitResult.COMMITTED),
         )
-        assertTrue(
-            "VerifiedReleaseProof must not expose a data-class copy bypass",
-            VerifiedReleaseProof::class.java.methods.none { it.name == "copy" },
+        assertEquals(
+            DurableLedgerCommitDecision.PreserveCustody,
+            DurableReleaseIntentDecisionPolicy.resolveCommit(DurableLedgerCommitResult.NOT_COMMITTED),
+        )
+        assertEquals(
+            DurableLedgerCommitDecision.NotCommittedConfirmed,
+            DurableReleaseIntentDecisionPolicy.resolveCommit(
+                DurableLedgerCommitResult.NOT_COMMITTED,
+                rollbackEvidenceConfirmed = true,
+            ),
+        )
+        assertEquals(
+            DurableLedgerCommitDecision.PreserveCustody,
+            DurableReleaseIntentDecisionPolicy.resolveCommit(DurableLedgerCommitResult.UNKNOWN),
+        )
+        assertEquals(
+            DurableLedgerCommitDecision.StopRetry,
+            DurableReleaseIntentDecisionPolicy.resolveCommit(DurableLedgerCommitResult.CONTRACT_VIOLATION),
         )
     }
 
     @Test
-    fun durableDecisionPolicyExistsForBehavioralCommitAndLookupResolution() {
-        Class.forName("com.fruitblast.app.capture.DurableReleaseIntentDecisionPolicy")
+    fun lookupPolicyKeepsUnknownDistinctFromRecoveredAbsence() {
+        val intent = preparedIntent()
+        assertEquals(
+            DurableLedgerLookupDecision.Found(intent),
+            DurableReleaseIntentDecisionPolicy.resolveLookup(DurableReleaseIntentLookup.Found(intent)),
+        )
+        assertEquals(
+            DurableLedgerLookupDecision.AbsenceConfirmed,
+            DurableReleaseIntentDecisionPolicy.resolveLookup(DurableReleaseIntentLookup.NotFoundAfterRecovery),
+        )
+        assertEquals(
+            DurableLedgerLookupDecision.PreserveCustody,
+            DurableReleaseIntentDecisionPolicy.resolveLookup(DurableReleaseIntentLookup.Unknown),
+        )
     }
 
 }

@@ -8,8 +8,8 @@ import java.security.MessageDigest
 /**
  * Durable state of the release obligation.
  *
- * UNKNOWN is deliberately terminal in this ordinary transition contract.
- * Resolving it requires a separately authorized recovery protocol.
+ * UNKNOWN is terminal in ordinary transitions. Resolving it requires a separately
+ * authorized recovery protocol; a proof cannot bypass this state boundary.
  */
 enum class ReleaseObligationState {
     PREPARED,
@@ -24,7 +24,7 @@ enum class ReleaseObligationState {
     }
 }
 
-/** Durable custody state of the resource; this is metadata, never a live handle. */
+/** Durable custody state of the resource; metadata only, never a live handle. */
 enum class ReleaseResourceState {
     CALLER_OWNED,
     RUNTIME_OWNED,
@@ -33,19 +33,25 @@ enum class ReleaseResourceState {
 }
 
 /**
- * Metadata-only proof issued by an authoritative release verifier.
+ * Metadata presented to a release authority for independent verification.
  *
- * Construction is internal so external callers cannot manufacture proof.
- * This contract does not define or grant a release authority; an authorized
- * implementation must issue this value only after verifying terminal evidence.
+ * This interface is not itself proof of authenticity. The verifier supplied by the
+ * trusted composition root must authenticate the authority/evidence pair.
  */
-sealed interface ReleaseProof {
+interface ReleaseProof {
     val descriptor: OwnershipTransferDescriptor
     val authorityId: String
     val evidenceId: String
 }
 
-data class VerifiedReleaseProof internal constructor(
+/**
+ * Opaque proof metadata. Its private constructor prevents ordinary callers from
+ * constructing or copying instances through the public API.
+ *
+ * The internal issuer bridge is not a security boundary: same-module code can call
+ * it. Authenticity is established only by the trusted ReleaseProofVerifier.
+ */
+class VerifiedReleaseProof private constructor(
     override val descriptor: OwnershipTransferDescriptor,
     override val authorityId: String,
     override val evidenceId: String,
@@ -54,9 +60,28 @@ data class VerifiedReleaseProof internal constructor(
         require(authorityId.isNotBlank()) { "authorityId must not be blank" }
         require(evidenceId.isNotBlank()) { "evidenceId must not be blank" }
     }
+
+    companion object {
+        /** Called by the module's release-authority adapter after collecting evidence. */
+        internal fun issuedByAuthority(
+            descriptor: OwnershipTransferDescriptor,
+            authorityId: String,
+            evidenceId: String,
+        ): VerifiedReleaseProof = VerifiedReleaseProof(descriptor, authorityId, evidenceId)
+    }
 }
 
-/** A requested state transition with optimistic revision precondition. */
+/**
+ * Trusted composition-root capability for validating release evidence.
+ *
+ * Implementations must bind authorityId/evidenceId to independently verified,
+ * terminal release evidence. A permissive implementation is not an authority.
+ */
+fun interface ReleaseProofVerifier {
+    fun verify(proof: ReleaseProof, descriptor: OwnershipTransferDescriptor): Boolean
+}
+
+/** A requested state transition with an optimistic revision precondition. */
 data class ReleaseIntentTransition(
     val expectedRevision: Long,
     val nextState: ReleaseObligationState,
@@ -78,13 +103,13 @@ sealed interface ReleaseIntentTransitionResult {
 }
 
 /**
- * Immutable, serializable intent metadata for one release obligation.
+ * Immutable, metadata-only intent for one release obligation.
  *
- * This type intentionally contains no resource reference, native handle,
- * file descriptor, Binder, MediaProjection, VirtualDisplay or ImageReader.
- * Persistence and transaction behavior belong to the SQLite ledger phase.
+ * Construction is controlled by createPrepared(), restore(), and transition().
+ * There is deliberately no public constructor or data-class copy() method.
+ * Persistence and atomic transaction semantics remain the SQLite ledger's concern.
  */
-data class DurableReleaseIntent(
+class DurableReleaseIntent private constructor(
     val descriptor: OwnershipTransferDescriptor,
     val schemaVersion: Int,
     val obligationState: ReleaseObligationState,
@@ -92,7 +117,7 @@ data class DurableReleaseIntent(
     val revision: Long,
     val updatedAtMillis: Long,
     val payloadHash: String,
-    val payloadFormatVersion: Int = DurableReleasePayloadHasher.CURRENT_FORMAT_VERSION,
+    val payloadFormatVersion: Int,
 ) {
     init {
         require(schemaVersion > 0) { "schemaVersion must be positive" }
@@ -102,81 +127,173 @@ data class DurableReleaseIntent(
         require(payloadHash == DurableReleasePayloadHasher.hash(descriptor, payloadFormatVersion)) {
             "payloadHash must match the canonical descriptor payload"
         }
-
-        val expectedResourceState = when (obligationState) {
-            ReleaseObligationState.PREPARED -> ReleaseResourceState.CALLER_OWNED
-            ReleaseObligationState.ACCEPTED -> ReleaseResourceState.RUNTIME_OWNED
-            ReleaseObligationState.RELEASED -> ReleaseResourceState.RELEASED
-            ReleaseObligationState.UNKNOWN -> ReleaseResourceState.UNKNOWN
-        }
-        require(resourceState == expectedResourceState) {
+        require(resourceState == expectedResourceState(obligationState)) {
             "resourceState must match obligationState"
         }
     }
 
     /**
-     * Applies a pure contract transition. A durable ledger must additionally
-     * perform the expectedRevision compare-and-set atomically with event writes.
+     * Applies a pure transition. A RELEASED transition requires a verifier supplied
+     * by the trusted composition root; verifier exceptions fail closed.
+     * A durable ledger must additionally make revision CAS and event writes atomic.
      */
-    fun transition(change: ReleaseIntentTransition): ReleaseIntentTransitionResult {
+    fun transition(
+        change: ReleaseIntentTransition,
+        proofVerifier: ReleaseProofVerifier? = null,
+    ): ReleaseIntentTransitionResult {
         if (change.expectedRevision != revision) {
-            return ReleaseIntentTransitionResult.Rejected(
-                ReleaseIntentTransitionRejection.STALE_REVISION,
-            )
+            return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.STALE_REVISION)
         }
         if (change.nextState == obligationState) {
             return ReleaseIntentTransitionResult.Idempotent(this)
         }
         if (!obligationState.canTransitionTo(change.nextState)) {
-            return ReleaseIntentTransitionResult.Rejected(
-                ReleaseIntentTransitionRejection.INVALID_STATE_TRANSITION,
-            )
+            return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.INVALID_STATE_TRANSITION)
         }
         if (change.nextState == ReleaseObligationState.RELEASED) {
             val proof = change.releaseProof
-                ?: return ReleaseIntentTransitionResult.Rejected(
-                    ReleaseIntentTransitionRejection.RELEASE_PROOF_REQUIRED,
-                )
-            if (proof.descriptor != descriptor ||
-                proof.authorityId.isBlank() ||
-                proof.evidenceId.isBlank()
-            ) {
-                return ReleaseIntentTransitionResult.Rejected(
-                    ReleaseIntentTransitionRejection.RELEASE_PROOF_MISMATCH,
-                )
+                ?: return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_REQUIRED)
+            val verifier = proofVerifier
+                ?: return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_REQUIRED)
+            val verified = try {
+                proof.descriptor == descriptor && verifier.verify(proof, descriptor)
+            } catch (_: Exception) {
+                false
+            }
+            if (!verified) {
+                return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_MISMATCH)
             }
         }
 
         val nextRevision = try {
             Math.addExact(revision, 1L)
         } catch (_: ArithmeticException) {
-            return ReleaseIntentTransitionResult.Rejected(
-                ReleaseIntentTransitionRejection.REVISION_OVERFLOW,
-            )
-        }
-        val nextResourceState = when (change.nextState) {
-            ReleaseObligationState.PREPARED -> ReleaseResourceState.CALLER_OWNED
-            ReleaseObligationState.ACCEPTED -> ReleaseResourceState.RUNTIME_OWNED
-            ReleaseObligationState.RELEASED -> ReleaseResourceState.RELEASED
-            ReleaseObligationState.UNKNOWN -> ReleaseResourceState.UNKNOWN
+            return ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.REVISION_OVERFLOW)
         }
         return ReleaseIntentTransitionResult.Applied(
-            copy(
+            DurableReleaseIntent(
+                descriptor = descriptor,
+                schemaVersion = schemaVersion,
                 obligationState = change.nextState,
-                resourceState = nextResourceState,
+                resourceState = expectedResourceState(change.nextState),
                 revision = nextRevision,
+                updatedAtMillis = updatedAtMillis,
+                payloadHash = payloadHash,
+                payloadFormatVersion = payloadFormatVersion,
             ),
         )
     }
+
+    // Preserve data-class structural behavior except copy(), which was a RELEASED bypass.
+    operator fun component1() = descriptor
+    operator fun component2() = schemaVersion
+    operator fun component3() = obligationState
+    operator fun component4() = resourceState
+    operator fun component5() = revision
+    operator fun component6() = updatedAtMillis
+    operator fun component7() = payloadHash
+    operator fun component8() = payloadFormatVersion
+
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is DurableReleaseIntent &&
+            descriptor == other.descriptor &&
+            schemaVersion == other.schemaVersion &&
+            obligationState == other.obligationState &&
+            resourceState == other.resourceState &&
+            revision == other.revision &&
+            updatedAtMillis == other.updatedAtMillis &&
+            payloadHash == other.payloadHash &&
+            payloadFormatVersion == other.payloadFormatVersion)
+
+    override fun hashCode(): Int {
+        var result = descriptor.hashCode()
+        result = 31 * result + schemaVersion
+        result = 31 * result + obligationState.hashCode()
+        result = 31 * result + resourceState.hashCode()
+        result = 31 * result + revision.hashCode()
+        result = 31 * result + updatedAtMillis.hashCode()
+        result = 31 * result + payloadHash.hashCode()
+        result = 31 * result + payloadFormatVersion
+        return result
+    }
+
+    override fun toString(): String =
+        "DurableReleaseIntent(descriptor=$descriptor, schemaVersion=$schemaVersion, " +
+            "obligationState=$obligationState, resourceState=$resourceState, revision=$revision, " +
+            "updatedAtMillis=$updatedAtMillis, payloadHash=$payloadHash, " +
+            "payloadFormatVersion=$payloadFormatVersion)"
+
+    companion object {
+        /** Creates only a fresh PREPARED obligation. */
+        fun createPrepared(
+            descriptor: OwnershipTransferDescriptor,
+            schemaVersion: Int = 1,
+            revision: Long = 1L,
+            updatedAtMillis: Long,
+            payloadFormatVersion: Int = DurableReleasePayloadHasher.CURRENT_FORMAT_VERSION,
+        ): DurableReleaseIntent = DurableReleaseIntent(
+            descriptor = descriptor,
+            schemaVersion = schemaVersion,
+            obligationState = ReleaseObligationState.PREPARED,
+            resourceState = ReleaseResourceState.CALLER_OWNED,
+            revision = revision,
+            updatedAtMillis = updatedAtMillis,
+            payloadHash = DurableReleasePayloadHasher.hash(descriptor, payloadFormatVersion),
+            payloadFormatVersion = payloadFormatVersion,
+        )
+
+        /**
+         * Restores metadata after durable-store recovery.
+         *
+         * RELEASED is accepted only when the trusted verifier validates its persisted
+         * authority/evidence metadata. PREPARED, ACCEPTED and UNKNOWN do not need a
+         * release proof; UNKNOWN remains quarantined and is not resolved here.
+         */
+        fun restore(
+            descriptor: OwnershipTransferDescriptor,
+            schemaVersion: Int,
+            obligationState: ReleaseObligationState,
+            resourceState: ReleaseResourceState,
+            revision: Long,
+            updatedAtMillis: Long,
+            payloadHash: String,
+            payloadFormatVersion: Int = DurableReleasePayloadHasher.CURRENT_FORMAT_VERSION,
+            releaseProof: ReleaseProof? = null,
+            proofVerifier: ReleaseProofVerifier? = null,
+        ): DurableReleaseIntent {
+            if (obligationState == ReleaseObligationState.RELEASED) {
+                require(releaseProof != null) { "RELEASED recovery requires release proof metadata" }
+                require(releaseProof.descriptor == descriptor) { "Release proof descriptor mismatch" }
+                require(proofVerifier != null) { "RELEASED recovery requires a trusted proof verifier" }
+                val verified = try {
+                    proofVerifier.verify(releaseProof, descriptor)
+                } catch (_: Exception) {
+                    false
+                }
+                require(verified) { "Release proof was not verified by the trusted authority" }
+            } else {
+                require(releaseProof == null) { "Release proof is only valid for RELEASED recovery" }
+            }
+            return DurableReleaseIntent(
+                descriptor, schemaVersion, obligationState, resourceState, revision,
+                updatedAtMillis, payloadHash, payloadFormatVersion,
+            )
+        }
+    }
+}
+
+private fun expectedResourceState(state: ReleaseObligationState): ReleaseResourceState = when (state) {
+    ReleaseObligationState.PREPARED -> ReleaseResourceState.CALLER_OWNED
+    ReleaseObligationState.ACCEPTED -> ReleaseResourceState.RUNTIME_OWNED
+    ReleaseObligationState.RELEASED -> ReleaseResourceState.RELEASED
+    ReleaseObligationState.UNKNOWN -> ReleaseResourceState.UNKNOWN
 }
 
 /**
  * Versioned canonical SHA-256 hash for immutable ownership descriptor metadata.
  *
- * Every string is UTF-8 with a signed 32-bit big-endian byte-length prefix.
- * Integer fields use signed 64-bit big-endian encoding. Enum identifiers use
- * their stable names, never ordinal values. Mutable state and the hash itself
- * are deliberately excluded.
+ * Strings use UTF-8 with a signed 32-bit big-endian byte-length prefix. Integer
+ * fields use signed 64-bit big-endian encoding. Enum identifiers use stable names.
  */
 object DurableReleasePayloadHasher {
     const val CURRENT_FORMAT_VERSION: Int = 1
@@ -212,12 +329,7 @@ object DurableReleasePayloadHasher {
     }
 }
 
-/**
- * Result of a durable ledger commit attempt.
- *
- * UNKNOWN means the commit outcome cannot be proven. It must never be treated
- * as NOT_COMMITTED or used to authorize resource release/reuse.
- */
+/** Result of a durable ledger commit attempt. */
 enum class DurableLedgerCommitResult {
     COMMITTED,
     NOT_COMMITTED,
@@ -225,17 +337,55 @@ enum class DurableLedgerCommitResult {
     CONTRACT_VIOLATION,
 }
 
-/**
- * Lookup result after consulting and recovering the durable store.
- *
- * NotFoundAfterRecovery is stronger than an in-memory miss: the store has
- * completed recovery and proves no commit for the transfer is pending/possible.
- * Unknown preserves ambiguity and requires custody to remain quarantined.
- */
+/** Lookup after the durable store has completed the required recovery protocol. */
 sealed interface DurableReleaseIntentLookup {
     data class Found(val intent: DurableReleaseIntent) : DurableReleaseIntentLookup
-
     data object NotFoundAfterRecovery : DurableReleaseIntentLookup
-
     data object Unknown : DurableReleaseIntentLookup
+}
+
+sealed interface DurableLedgerCommitDecision {
+    data object Committed : DurableLedgerCommitDecision
+
+    /** Confirms absence of a commit only; it never authorizes resource release. */
+    data object NotCommittedConfirmed : DurableLedgerCommitDecision
+
+    /** Preserve custody/quarantine because commit outcome is ambiguous or unproven. */
+    data object PreserveCustody : DurableLedgerCommitDecision
+
+    /** Stop retries because the caller violated the durable contract. */
+    data object StopRetry : DurableLedgerCommitDecision
+}
+
+sealed interface DurableLedgerLookupDecision {
+    data class Found(val intent: DurableReleaseIntent) : DurableLedgerLookupDecision
+    data object AbsenceConfirmed : DurableLedgerLookupDecision
+    data object PreserveCustody : DurableLedgerLookupDecision
+}
+
+/**
+ * Pure fail-closed interpretation of durable ledger results.
+ *
+ * rollbackEvidenceConfirmed may be true only after storage recovery independently
+ * proves rollback. Neither decision returned here authorizes release/reuse of a
+ * runtime resource; that requires the separate release-proof contract.
+ */
+object DurableReleaseIntentDecisionPolicy {
+    fun resolveCommit(
+        result: DurableLedgerCommitResult,
+        rollbackEvidenceConfirmed: Boolean = false,
+    ): DurableLedgerCommitDecision = when (result) {
+        DurableLedgerCommitResult.COMMITTED -> DurableLedgerCommitDecision.Committed
+        DurableLedgerCommitResult.NOT_COMMITTED ->
+            if (rollbackEvidenceConfirmed) DurableLedgerCommitDecision.NotCommittedConfirmed
+            else DurableLedgerCommitDecision.PreserveCustody
+        DurableLedgerCommitResult.UNKNOWN -> DurableLedgerCommitDecision.PreserveCustody
+        DurableLedgerCommitResult.CONTRACT_VIOLATION -> DurableLedgerCommitDecision.StopRetry
+    }
+
+    fun resolveLookup(result: DurableReleaseIntentLookup): DurableLedgerLookupDecision = when (result) {
+        is DurableReleaseIntentLookup.Found -> DurableLedgerLookupDecision.Found(result.intent)
+        DurableReleaseIntentLookup.NotFoundAfterRecovery -> DurableLedgerLookupDecision.AbsenceConfirmed
+        DurableReleaseIntentLookup.Unknown -> DurableLedgerLookupDecision.PreserveCustody
+    }
 }
