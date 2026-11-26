@@ -5,25 +5,37 @@ private data class FakeNode(val name: String, val children: List<FakeNode> = emp
 private class FakeNodeAccess(
     private val failSnapshotFor: String? = null,
     private val failChildAtIndex: Int? = null,
+    private val onSnapshot: (FakeNode) -> Unit = {},
+    private val onChildCount: (FakeNode) -> Unit = {},
+    private val onChildAt: (FakeNode, Int) -> Unit = { _, _ -> },
+    private val failRecycleFor: Set<String> = emptySet(),
 ) : NodeTraversalAccess<FakeNode, String> {
     val recycled = mutableListOf<String>()
     var childReads = 0
+    var childCountReads = 0
 
     override fun snapshot(node: FakeNode): String {
+        onSnapshot(node)
         if (node.name == failSnapshotFor) throw IllegalStateException("snapshot failed")
         return node.name
     }
 
-    override fun childCount(node: FakeNode): Int = node.children.size
+    override fun childCount(node: FakeNode): Int {
+        childCountReads++
+        onChildCount(node)
+        return node.children.size
+    }
 
     override fun childAt(node: FakeNode, index: Int): FakeNode? {
         childReads++
+        onChildAt(node, index)
         if (index == failChildAtIndex) throw IllegalStateException("child lookup failed")
         return node.children[index]
     }
 
     override fun recycle(node: FakeNode) {
         recycled += node.name
+        if (node.name in failRecycleFor) throw IllegalStateException("recycle failed")
     }
 }
 
@@ -104,5 +116,95 @@ internal fun runBoundedNodeTraversalTests() {
         check(result.complete && result.snapshots.isEmpty() && access.recycled.isEmpty())
     }
 
-    println("PASS: 8 bounded traversal/resource ownership assertions")
+    // F06-B-01: expiry immediately after snapshot prevents child enumeration.
+    run {
+        var now = 0L
+        val access = FakeNodeAccess(onSnapshot = { now = 10L })
+        val result = scan(
+            FakeNode("root", listOf(FakeNode("child"))), access,
+            budget = 10L,
+            clock = { now },
+        )
+        check(!result.complete && result.snapshots.isEmpty())
+        check(access.childCountReads == 0)
+        check(access.recycled == listOf("root"))
+    }
+
+    // F06-B-02: expiry immediately after childCount prevents childAt.
+    run {
+        var now = 0L
+        val access = FakeNodeAccess(onChildCount = { now = 10L })
+        val result = scan(
+            FakeNode("root", listOf(FakeNode("child"))), access,
+            budget = 10L,
+            clock = { now },
+        )
+        check(!result.complete && result.snapshots.isEmpty())
+        check(access.childCountReads == 1 && access.childReads == 0)
+        check(access.recycled == listOf("root"))
+    }
+
+    // F06-B-03: a child acquired as the budget expires is recycled immediately.
+    run {
+        var now = 0L
+        val access = FakeNodeAccess(onChildAt = { _, _ -> now = 10L })
+        val result = scan(
+            FakeNode("root", listOf(FakeNode("late-child"))), access,
+            budget = 10L,
+            clock = { now },
+        )
+        check(!result.complete && result.snapshots.isEmpty())
+        check(access.recycled.toSet() == setOf("root", "late-child"))
+        check(access.recycled.size == 2)
+    }
+
+    // F06-B-04: all nodes already pending are released when the next loop sees expiry.
+    run {
+        var clockCalls = 0
+        val access = FakeNodeAccess()
+        val result = scan(
+            FakeNode("root", listOf(FakeNode("pending-1"), FakeNode("pending-2"))),
+            access,
+            budget = 10L,
+            clock = {
+                clockCalls++
+                if (clockCalls >= 8) 10L else 0L
+            },
+        )
+        check(!result.complete && result.snapshots.isEmpty())
+        check(access.recycled.toSet() == setOf("root", "pending-1", "pending-2"))
+        check(access.recycled.size == 3)
+    }
+
+    // F06-B-05: one recycle failure must not prevent best-effort cleanup of later nodes.
+    run {
+        val access = FakeNodeAccess(
+            failSnapshotFor = "bad",
+            failRecycleFor = setOf("pending-1"),
+        )
+        val root = FakeNode(
+            "root",
+            listOf(FakeNode("bad"), FakeNode("pending-1"), FakeNode("pending-2")),
+        )
+        val result = scan(root, access)
+        check(!result.complete && result.snapshots.isEmpty())
+        check(access.recycled.toSet() == setOf("root", "bad", "pending-1", "pending-2"))
+        check(access.recycled.size == 4)
+    }
+
+    // A clock value below the limit remains within budget; equality and greater-than expire.
+    run {
+        val belowAccess = FakeNodeAccess()
+        val below = scan(FakeNode("leaf"), belowAccess, budget = 10L, clock = { 9L })
+        check(below.complete && below.snapshots == listOf("leaf"))
+
+        for (expiredAt in listOf(10L, 11L)) {
+            val access = FakeNodeAccess()
+            val result = scan(FakeNode("leaf"), access, budget = 10L, clock = { expiredAt })
+            check(!result.complete && result.snapshots.isEmpty())
+            check(access.recycled == listOf("leaf"))
+        }
+    }
+
+    println("PASS: 14 bounded traversal/resource ownership assertions")
 }
