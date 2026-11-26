@@ -64,7 +64,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         outcome: FrameReleaseCompletion = FrameReleaseCompletion.UNKNOWN,
         dispatchResult: ReleaseDispatchResult = ReleaseDispatchResult.ACCEPTED,
         throwOnDispatch: Boolean = false,
-        deferCompletion: ((FrameReleaseCompletion) -> Unit)? = null,
+        deferCompletion: (((FrameReleaseCompletion) -> Unit) -> Unit)? = null,
         attempts: (() -> Unit)? = null,
     ) = object : FrameReleaseHandler<String> {
         override fun dispatch(
@@ -100,8 +100,7 @@ class CaptureFramePoolOwnershipHandoffTest {
     @Test fun transferRequiresPositiveSessionGeneration() {
         val sink = RecordingSink()
         val metadata = FixedMetadataProvider()
-        val pool = pool(sink, metadata, generation = 0L)
-        triggerRelease(pool)
+        assertTrue(runCatching { pool(sink, metadata, generation = 0L) }.isFailure)
         assertTrue(sink.descriptors.isEmpty())
     }
 
@@ -123,7 +122,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         val metadata = FixedMetadataProvider()
         val pool = pool(sink, metadata)
         triggerRelease(pool)
-        repeat(3) { pool.retryPendingReleases() }
+        repeat(3) { pool.retryRejectedOwnershipTransfers() }
         assertEquals(1, metadata.calls)
     }
 
@@ -153,7 +152,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         val sink = RecordingSink(OwnershipTransferResult.REJECTED_NOT_ACCEPTED)
         val pool = pool(sink)
         triggerRelease(pool)
-        repeat(3) { pool.retryPendingReleases() }
+        repeat(3) { pool.retryRejectedOwnershipTransfers() }
         assertTrue(sink.descriptors.map { it.transferId }.distinct().size == 1)
     }
 
@@ -166,8 +165,11 @@ class CaptureFramePoolOwnershipHandoffTest {
         triggerRelease(pool)
         val original = sink.descriptors.single()
         pool.reconcileOwnershipTransfers()
-        assertSame(original, sink.descriptors.single())
-        assertEquals(original, sink.descriptors.single())
+        assertEquals(listOf(original.transferId), sink.queries)
+        sink.queryResult = OwnershipTransferStatus.NOT_COMMITTED
+        pool.reconcileOwnershipTransfers()
+        assertSame(original, sink.descriptors.last())
+        assertEquals(original, sink.descriptors.last())
     }
 
     @Test fun acceptedTransferRelinquishesPoolCustodyExactlyOnce() {
@@ -191,14 +193,14 @@ class CaptureFramePoolOwnershipHandoffTest {
         val sink = RecordingSink(OwnershipTransferResult.REJECTED_NOT_ACCEPTED)
         val pool = pool(sink)
         triggerRelease(pool)
-        assertEquals(1, pool.snapshot().unresolvedReleaseCount + pool.snapshot().pendingReleaseCount)
+        assertEquals(1, pool.snapshot().pendingOwnershipTransferCount)
     }
 
     @Test fun unknownTransferDoesNotRelinquishCustody() {
         val sink = RecordingSink(OwnershipTransferResult.UNKNOWN)
         val pool = pool(sink)
         triggerRelease(pool)
-        assertEquals(1, pool.snapshot().unresolvedReleaseCount)
+        assertEquals(1, pool.snapshot().unresolvedOwnershipTransferCount)
     }
 
     @Test fun transferInFlightDoesNotReleaseResourceFromEitherOwner() {
@@ -240,7 +242,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         val pool = pool(sink, releaseHandler = handler(attempts = { released++ }))
         triggerRelease(pool)
         assertEquals(1, released)
-        assertEquals(1, pool.snapshot().pendingReleaseCount)
+        assertEquals(1, pool.snapshot().pendingOwnershipTransferCount)
     }
 
     @Test fun unknownThenQueryAcceptedMovesCustodyToRegistry() {
@@ -267,7 +269,7 @@ class CaptureFramePoolOwnershipHandoffTest {
         val pool = pool(sink)
         triggerRelease(pool)
         pool.reconcileOwnershipTransfers()
-        assertEquals(1, pool.snapshot().unresolvedReleaseCount)
+        assertEquals(1, pool.snapshot().unresolvedOwnershipTransferCount)
     }
 
     @Test fun repeatedUnknownReconciliationDoesNotCreateUnboundedTransferAttempts() {
