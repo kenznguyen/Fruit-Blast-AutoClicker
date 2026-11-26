@@ -57,3 +57,13 @@ interface ReleaseOwnershipSink<T : Any> {
 
     fun queryTransfer(transferId: String): OwnershipTransferStatus
 }
+/** Stable resource metadata used to construct an ownership-transfer descriptor. */
+data class FrameResourceMetadata(
+    val resourceId: Long,
+    val estimatedBytes: Long,
+)
+
+/** Supplies immutable metadata once for each release obligation. */
+fun interface FrameResourceMetadataProvider<T : Any> {
+    fun describe(resource: T): FrameResourceMetadata
+}
