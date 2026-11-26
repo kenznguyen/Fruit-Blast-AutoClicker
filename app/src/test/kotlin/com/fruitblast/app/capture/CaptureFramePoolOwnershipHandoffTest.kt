@@ -442,4 +442,84 @@ class CaptureFramePoolOwnershipHandoffTest {
         assertEquals(1, pool.snapshot().unresolvedReleaseCount)
         assertTrue(released.isEmpty())
     }
+    @Test fun ownershipTransferDependenciesMustBeProvidedTogether() {
+        val sink = RecordingSink()
+        val metadata = FixedMetadataProvider()
+        assertTrue(runCatching {
+            CaptureFramePool<String>(
+                releaseHandler = handler(),
+                sessionGeneration = 42L,
+                ownershipSink = sink,
+            )
+        }.isFailure)
+        assertTrue(runCatching {
+            CaptureFramePool<String>(
+                releaseHandler = handler(),
+                sessionGeneration = 42L,
+                metadataProvider = metadata,
+            )
+        }.isFailure)
+    }
+
+    @Test fun descriptorUsesStableTransferIdAndInjectedClock() {
+        val sink = RecordingSink()
+        pool(sink).also(::triggerRelease)
+        val descriptor = sink.descriptors.single()
+        assertEquals("capture-frame:42:1", descriptor.transferId)
+        assertEquals(1234L, descriptor.createdAtMillis)
+    }
+
+    @Test fun negativeClockRetainsPoolCustodyWithoutRegistryCall() {
+        val sink = RecordingSink()
+        val pool = CaptureFramePool<String>(
+            releaseHandler = handler(),
+            sessionGeneration = 42L,
+            ownershipSink = sink,
+            metadataProvider = FixedMetadataProvider(),
+            clockMillis = { -1L },
+        )
+        triggerRelease(pool)
+        assertTrue(sink.descriptors.isEmpty())
+        assertEquals(1, pool.snapshot().unresolvedReleaseCount)
+    }
+
+    @Test fun ownershipSinkExceptionLeavesTransferUnknownAndFrozen() {
+        val sink = object : ReleaseOwnershipSink<String> {
+            override fun acceptOwnership(
+                descriptor: OwnershipTransferDescriptor,
+                resource: String,
+            ): OwnershipTransferResult {
+                error("registry outcome unavailable")
+            }
+
+            override fun queryTransfer(transferId: String): OwnershipTransferStatus =
+                OwnershipTransferStatus.UNKNOWN
+        }
+        val pool = CaptureFramePool<String>(
+            releaseHandler = handler(),
+            sessionGeneration = 42L,
+            ownershipSink = sink,
+            metadataProvider = FixedMetadataProvider(),
+            clockMillis = { 1234L },
+        )
+        triggerRelease(pool)
+        assertEquals(1, pool.snapshot().unresolvedOwnershipTransferCount)
+    }
+
+    @Test fun rejectedTransferRetryReusesCachedDescriptorInstance() {
+        val sink = RecordingSink(OwnershipTransferResult.REJECTED_NOT_ACCEPTED)
+        val metadata = FixedMetadataProvider()
+        val pool = pool(sink, metadata)
+        triggerRelease(pool)
+        val original = sink.descriptors.single()
+
+        sink.acceptResult = OwnershipTransferResult.ACCEPTED
+        pool.retryRejectedOwnershipTransfers()
+
+        assertSame(original, sink.descriptors.last())
+        assertEquals(1, metadata.calls)
+        assertEquals(0, pool.snapshot().pendingOwnershipTransferCount)
+        assertEquals(0, pool.snapshot().unresolvedOwnershipTransferCount)
+    }
+
 }
