@@ -2,6 +2,7 @@ package com.fruitblast.app.capture
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -17,7 +18,7 @@ class DurableReleaseIntentContractsTest {
         assertEquals(ReleaseResourceState.CALLER_OWNED, intent.resourceState)
         assertEquals(1L, intent.revision)
         assertEquals(123456790L, intent.updatedAtMillis)
-        assertEquals("sha256:0123456789abcdef", intent.payloadHash)
+        assertTrue(intent.payloadHash.matches(Regex("sha256:[0-9a-f]{64}")))
     }
 
     @Test
@@ -57,18 +58,163 @@ class DurableReleaseIntentContractsTest {
     }
 
     @Test
-    fun releaseIntentTransitionsAreMonotonicAndFailClosed() {
-        assertTrue(ReleaseObligationState.PREPARED.canTransitionTo(ReleaseObligationState.ACCEPTED))
-        assertTrue(ReleaseObligationState.PREPARED.canTransitionTo(ReleaseObligationState.RELEASED))
-        assertTrue(ReleaseObligationState.PREPARED.canTransitionTo(ReleaseObligationState.UNKNOWN))
-        assertTrue(ReleaseObligationState.ACCEPTED.canTransitionTo(ReleaseObligationState.RELEASED))
-        assertTrue(ReleaseObligationState.ACCEPTED.canTransitionTo(ReleaseObligationState.UNKNOWN))
+    fun releasedStateRequiresMatchingAuthoritativeProof() {
+        val intent = preparedIntent()
+        val unrelatedProof = verifiedProof(
+            descriptor = ownershipDescriptor(resourceId = 99L),
+        )
 
-        assertFalse(ReleaseObligationState.ACCEPTED.canTransitionTo(ReleaseObligationState.PREPARED))
-        assertFalse(ReleaseObligationState.RELEASED.canTransitionTo(ReleaseObligationState.PREPARED))
-        assertFalse(ReleaseObligationState.RELEASED.canTransitionTo(ReleaseObligationState.UNKNOWN))
-        assertFalse(ReleaseObligationState.UNKNOWN.canTransitionTo(ReleaseObligationState.ACCEPTED))
-        assertFalse(ReleaseObligationState.UNKNOWN.canTransitionTo(ReleaseObligationState.RELEASED))
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_REQUIRED),
+            intent.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                ),
+            ),
+        )
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.RELEASE_PROOF_MISMATCH),
+            intent.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                    releaseProof = unrelatedProof,
+                ),
+            ),
+        )
+        assertEquals(
+            ReleaseIntentTransitionResult.Applied(
+                intent.copy(
+                    obligationState = ReleaseObligationState.RELEASED,
+                    resourceState = ReleaseResourceState.RELEASED,
+                    revision = 2L,
+                ),
+            ),
+            intent.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                    releaseProof = verifiedProof(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun unknownCannotBeResolvedByOrdinaryTransitionEvenWithReleaseProof() {
+        val unknown = preparedIntent(
+            obligationState = ReleaseObligationState.UNKNOWN,
+            resourceState = ReleaseResourceState.UNKNOWN,
+        )
+
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.INVALID_STATE_TRANSITION),
+            unknown.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 1L,
+                    nextState = ReleaseObligationState.RELEASED,
+                    releaseProof = verifiedProof(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun transitionGraphIsExhaustiveAndFailClosed() {
+        val allowed = setOf(
+            ReleaseObligationState.PREPARED to ReleaseObligationState.ACCEPTED,
+            ReleaseObligationState.PREPARED to ReleaseObligationState.RELEASED,
+            ReleaseObligationState.PREPARED to ReleaseObligationState.UNKNOWN,
+            ReleaseObligationState.ACCEPTED to ReleaseObligationState.RELEASED,
+            ReleaseObligationState.ACCEPTED to ReleaseObligationState.UNKNOWN,
+        )
+        ReleaseObligationState.values().forEach { from ->
+            ReleaseObligationState.values().forEach { to ->
+                assertEquals(
+                    "Unexpected transition $from -> $to",
+                    (from to to) in allowed,
+                    from.canTransitionTo(to),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun payloadHashIsCanonicalDeterministicAndCoversDescriptorIdentity() {
+        val descriptor = ownershipDescriptor()
+        val first = DurableReleasePayloadHasher.hash(descriptor)
+        val second = DurableReleasePayloadHasher.hash(descriptor)
+
+        assertEquals(first, second)
+        assertTrue(first.matches(Regex("sha256:[0-9a-f]{64}")))
+        assertNotEquals(
+            first,
+            DurableReleasePayloadHasher.hash(ownershipDescriptor(resourceId = 42L)),
+        )
+        assertNotEquals(
+            first,
+            DurableReleasePayloadHasher.hash(ownershipDescriptor(transferId = "capture-frame:7:014")),
+        )
+    }
+
+    @Test
+    fun payloadHashUsesFormatVersionAsDomainSeparation() {
+        val descriptor = ownershipDescriptor()
+
+        assertNotEquals(
+            DurableReleasePayloadHasher.hash(descriptor, formatVersion = 1),
+            DurableReleasePayloadHasher.hash(descriptor, formatVersion = 2),
+        )
+    }
+
+    @Test
+    fun transitionIncrementsRevisionOnlyForStateChanges() {
+        val prepared = preparedIntent()
+        val accepted = prepared.transition(
+            ReleaseIntentTransition(
+                expectedRevision = 1L,
+                nextState = ReleaseObligationState.ACCEPTED,
+            ),
+        ) as ReleaseIntentTransitionResult.Applied
+
+        assertEquals(2L, accepted.intent.revision)
+        assertEquals(ReleaseResourceState.RUNTIME_OWNED, accepted.intent.resourceState)
+
+        val repeated = accepted.intent.transition(
+            ReleaseIntentTransition(
+                expectedRevision = 2L,
+                nextState = ReleaseObligationState.ACCEPTED,
+            ),
+        ) as ReleaseIntentTransitionResult.Idempotent
+
+        assertEquals(2L, repeated.intent.revision)
+    }
+
+    @Test
+    fun transitionRejectsStaleRevisionAndRevisionOverflow() {
+        val prepared = preparedIntent()
+
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.STALE_REVISION),
+            prepared.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = 0L,
+                    nextState = ReleaseObligationState.ACCEPTED,
+                ),
+            ),
+        )
+
+        val maxRevision = prepared.copy(revision = Long.MAX_VALUE)
+        assertEquals(
+            ReleaseIntentTransitionResult.Rejected(ReleaseIntentTransitionRejection.REVISION_OVERFLOW),
+            maxRevision.transition(
+                ReleaseIntentTransition(
+                    expectedRevision = Long.MAX_VALUE,
+                    nextState = ReleaseObligationState.ACCEPTED,
+                ),
+            ),
+        )
     }
 
     @Test
@@ -86,32 +232,48 @@ class DurableReleaseIntentContractsTest {
 
     @Test
     fun lookupDistinguishesRecoveredAbsenceFromUnknownStorageOutcome() {
+        assertNotEquals(
+            DurableReleaseIntentLookup.NotFoundAfterRecovery,
+            DurableReleaseIntentLookup.Unknown,
+        )
         assertTrue(DurableReleaseIntentLookup.NotFoundAfterRecovery is DurableReleaseIntentLookup)
         assertTrue(DurableReleaseIntentLookup.Unknown is DurableReleaseIntentLookup)
-        assertFalse(
-            DurableReleaseIntentLookup.NotFoundAfterRecovery ==
-                DurableReleaseIntentLookup.Unknown,
-        )
     }
 
-    private fun ownershipDescriptor() = OwnershipTransferDescriptor(
-        transferId = "capture-frame:7:13",
+    private fun ownershipDescriptor(
+        transferId: String = "capture-frame:7:13",
+        resourceId: Long = 41L,
+    ) = OwnershipTransferDescriptor(
+        transferId = transferId,
         sessionGeneration = 7L,
-        resourceId = 41L,
+        resourceId = resourceId,
         releaseId = 13L,
         reason = QuarantineReason.RELEASE_UNKNOWN,
         estimatedBytes = 4096L,
         createdAtMillis = 123456789L,
     )
 
+    private fun verifiedProof(
+        descriptor: OwnershipTransferDescriptor = ownershipDescriptor(),
+    ) = VerifiedReleaseProof(
+        descriptor = descriptor,
+        authorityId = "capture-release-authority",
+        evidenceId = "release-event:13",
+    )
+
     private fun preparedIntent(
         descriptor: OwnershipTransferDescriptor = ownershipDescriptor(),
         schemaVersion: Int = 1,
         obligationState: ReleaseObligationState = ReleaseObligationState.PREPARED,
-        resourceState: ReleaseResourceState = ReleaseResourceState.CALLER_OWNED,
+        resourceState: ReleaseResourceState = when (obligationState) {
+            ReleaseObligationState.PREPARED -> ReleaseResourceState.CALLER_OWNED
+            ReleaseObligationState.ACCEPTED -> ReleaseResourceState.RUNTIME_OWNED
+            ReleaseObligationState.RELEASED -> ReleaseResourceState.RELEASED
+            ReleaseObligationState.UNKNOWN -> ReleaseResourceState.UNKNOWN
+        },
         revision: Long = 1L,
         updatedAtMillis: Long = 123456790L,
-        payloadHash: String = "sha256:0123456789abcdef",
+        payloadHash: String = DurableReleasePayloadHasher.hash(descriptor),
     ) = DurableReleaseIntent(
         descriptor = descriptor,
         schemaVersion = schemaVersion,
