@@ -351,7 +351,7 @@ class CaptureFramePool<T : Any>(
         val shouldPrepare = synchronized(lock) {
             releases[record.request.releaseId] === record &&
                 record.executionQuiescent &&
-                !record.terminalCallbackObserved.not() &&
+                (record.terminalCallbackObserved || record.retryCount >= MAX_RETRIES) &&
                 record.ownershipState == null
         }
         if (!shouldPrepare) return
