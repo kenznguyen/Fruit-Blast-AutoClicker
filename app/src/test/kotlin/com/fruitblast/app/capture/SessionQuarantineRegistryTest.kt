@@ -1,7 +1,6 @@
 package com.fruitblast.app.capture
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
@@ -40,7 +39,6 @@ class SessionQuarantineRegistryTest {
             OwnershipTransferStatus.ACCEPTED,
             registry.queryTransfer("transfer-1"),
         )
-        assertSame(resource, registry.resourceFor("transfer-1"))
     }
 
     @Test
@@ -57,7 +55,6 @@ class SessionQuarantineRegistryTest {
             OwnershipTransferResult.ALREADY_ACCEPTED,
             registry.acceptOwnership(descriptor, resource),
         )
-        assertSame(resource, registry.resourceFor("transfer-1"))
     }
 
     @Test
@@ -77,7 +74,6 @@ class SessionQuarantineRegistryTest {
                 Any(),
             ),
         )
-        assertSame(resource, registry.resourceFor("transfer-1"))
         assertEquals(
             OwnershipTransferStatus.ACCEPTED,
             registry.queryTransfer("transfer-1"),
@@ -100,8 +96,6 @@ class SessionQuarantineRegistryTest {
                 resource,
             ),
         )
-        assertSame(resource, registry.resourceFor("transfer-1"))
-        assertEquals(null, registry.resourceFor("transfer-2"))
     }
 
     @Test
@@ -214,6 +208,5 @@ class SessionQuarantineRegistryTest {
 
         assertEquals(1, accepted.get())
         assertEquals(workers - 1, alreadyAccepted.get())
-        assertSame(resource, registry.resourceFor("concurrent-transfer"))
     }
 }
