@@ -58,7 +58,7 @@ class SessionQuarantineRegistryTest {
     }
 
     @Test
-    fun sameTransferIdWithDifferentDescriptorIsRejectedWithoutReplacingCustody() {
+    fun sameTransferIdWithDifferentDescriptorIsContractViolationWithoutReplacingCustody() {
         val registry = SessionQuarantineRegistry<Any>()
         val resource = Any()
         val original = descriptor("transfer-1")
@@ -68,7 +68,7 @@ class SessionQuarantineRegistryTest {
             registry.acceptOwnership(original, resource),
         )
         assertEquals(
-            OwnershipTransferResult.REJECTED_NOT_ACCEPTED,
+            OwnershipTransferResult.CONTRACT_VIOLATION,
             registry.acceptOwnership(
                 descriptor("transfer-1", releaseId = 2L),
                 Any(),
@@ -77,6 +77,37 @@ class SessionQuarantineRegistryTest {
         assertEquals(
             OwnershipTransferStatus.ACCEPTED,
             registry.queryTransfer("transfer-1"),
+        )
+    }
+
+
+    @Test
+    fun sameResourceIdCannotBeAcceptedForDifferentResourceInstances() {
+        val registry = SessionQuarantineRegistry<Any>()
+        val firstResource = Any()
+        val secondResource = Any()
+
+        assertEquals(
+            OwnershipTransferResult.ACCEPTED,
+            registry.acceptOwnership(
+                descriptor("resource-transfer-1", resourceId = 77L),
+                firstResource,
+            ),
+        )
+        assertEquals(
+            OwnershipTransferResult.CONTRACT_VIOLATION,
+            registry.acceptOwnership(
+                descriptor("resource-transfer-2", resourceId = 77L, releaseId = 2L),
+                secondResource,
+            ),
+        )
+        assertEquals(
+            OwnershipTransferStatus.ACCEPTED,
+            registry.queryTransfer("resource-transfer-1"),
+        )
+        assertEquals(
+            OwnershipTransferStatus.NOT_COMMITTED,
+            registry.queryTransfer("resource-transfer-2"),
         )
     }
 
