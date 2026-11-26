@@ -71,6 +71,39 @@ jobs:
           set -o pipefail
           ./gradlew --no-daemon :policy:verifyPolicy 2>&1 | tee verification-logs/policy-verify.log
 
+      - name: Run app unit tests
+        id: unit_tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:testDebugUnitTest 2>&1 | tee verification-logs/app-unit-tests.log
+          python3 - <<'PY'
+          import glob
+          import xml.etree.ElementTree as ET
+
+          reports = sorted(glob.glob("app/build/test-results/testDebugUnitTest/TEST-*.xml"))
+          assert reports, "No Gradle JUnit XML reports were generated"
+          totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+          classes = set()
+          for report in reports:
+              root = ET.parse(report).getroot()
+              for key in totals:
+                  totals[key] += int(root.get(key, "0"))
+              for case in root.findall(".//testcase"):
+                  classes.add(case.get("classname", ""))
+          expected = {
+              "com.fruitblast.app.capture.CaptureSessionStateTest",
+              "com.fruitblast.app.capture.CaptureSessionOwnerTest",
+          }
+          missing = sorted(expected - classes)
+          assert not missing, f"Expected capture unit test classes missing from execution reports: {missing}"
+          assert totals["tests"] > 0, "Gradle reported zero executed unit tests"
+          assert totals["failures"] == 0 and totals["errors"] == 0, (
+              f"Unit test failures detected: {totals}"
+          )
+          print(f"PASS: app unit tests {totals}; capture test classes verified: {sorted(expected)}")
+          PY
+
       - name: Assemble production debug APK
         id: production
         shell: bash
@@ -545,6 +578,7 @@ jobs:
           PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
           INSTRUMENTATION_OUTCOME: ${{ steps.instrumentation.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
+          UNIT_TEST_OUTCOME: ${{ steps.unit_tests.outcome }}
           MANIFEST_OUTCOME: ${{ steps.manifests.outcome }}
           OFFLINE_P0_OUTCOME: ${{ steps.offline_p0.outcome }}
           OFFLINE_F01_OUTCOME: ${{ steps.offline_f01.outcome }}
@@ -562,6 +596,7 @@ jobs:
             echo "Production APK: ${PRODUCTION_OUTCOME:-not_run}"
             echo "Instrumentation APK compile: ${INSTRUMENTATION_OUTCOME:-not_run}"
             echo "Lint: ${LINT_OUTCOME:-not_run}"
+            echo "App unit tests (:app:testDebugUnitTest): ${UNIT_TEST_OUTCOME:-not_run}"
             echo "Manifest/configuration assertions: ${MANIFEST_OUTCOME:-not_run}"
             echo "Offline P0 APK identity/compiled XML/integrity assertions: ${OFFLINE_P0_OUTCOME:-not_run}"
             echo "F01 instrumentation test class/method compilation assertions: ${OFFLINE_F01_OUTCOME:-not_run} (execution NOT RUN)"
@@ -598,6 +633,8 @@ jobs:
             app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             app/build/reports/lint-results-debug.html
             app/build/reports/lint-results-debug.xml
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
             verification-logs/
           if-no-files-found: warn
           retention-days: 14
