@@ -22,9 +22,9 @@ concurrency:
 
 jobs:
   android-build:
-    name: Policy tests, Android build, APK manifest
+    name: Offline policy, Android APKs, manifest and lint
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -44,8 +44,9 @@ jobs:
       - name: Install Android 37 preview platform
         shell: bash
         run: |
+          mkdir -p verification-logs
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --list --channel=3 | grep -E 'platforms;android-37\.0[[:space:]]'
+          sdkmanager --list --channel=3 | grep -E 'platforms;android-37\\.0[[:space:]]'
           sdkmanager --channel=3 "platforms;android-37.0"
           test -f "$ANDROID_HOME/platforms/android-37.0/android.jar"
 
@@ -57,32 +58,187 @@ jobs:
       - name: Generate and verify Gradle Wrapper
         shell: bash
         run: |
-          gradle wrapper --gradle-version 9.7.0 --distribution-type bin --stacktrace
+          set -o pipefail
+          gradle wrapper --gradle-version 9.7.0 --distribution-type bin --stacktrace 2>&1 | tee verification-logs/gradle-wrapper.log
           test -x ./gradlew
           grep -F "gradle-9.7.0-bin.zip" gradle/wrapper/gradle-wrapper.properties
-          ./gradlew --version
+          ./gradlew --version 2>&1 | tee verification-logs/gradle-version.log
 
-      - name: Run Kotlin/JVM policy tests
-        run: ./gradlew --no-daemon :policy:verifyPolicy
-
-      - name: Assemble debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
-
-      - name: Verify APK AccessibilityService manifest
+      - name: Run Kotlin/JVM policy verification
+        id: policy
         shell: bash
         run: |
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$APK" > manifest.txt
-          grep -F "FruitBlastAccessibilityService" manifest.txt
-          grep -F "android.permission.BIND_ACCESSIBILITY_SERVICE" manifest.txt
-          grep -F "android.accessibilityservice.AccessibilityService" manifest.txt
+          set -o pipefail
+          ./gradlew --no-daemon :policy:verifyPolicy 2>&1 | tee verification-logs/policy-verify.log
 
-      - name: Upload debug APK and manifest
+      - name: Assemble production debug APK
+        id: production
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebug 2>&1 | tee verification-logs/assemble-debug.log
+          test -s app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Assemble instrumentation test APK
+        id: instrumentation
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:assembleDebugAndroidTest 2>&1 | tee verification-logs/assemble-android-test.log
+          test -s app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
+      - name: Run Android lint
+        id: lint
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon :app:lintDebug 2>&1 | tee verification-logs/lint-debug.log
+          test -s app/build/reports/lint-results-debug.xml
+          test -s app/build/reports/lint-results-debug.html
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          report = "app/build/reports/lint-results-debug.xml"
+          root = ET.parse(report).getroot()
+          issues = root.findall(".//issue")
+          errors = [i for i in issues if (i.get("severity") or "").lower() in {"error", "fatal"}]
+          warnings = [i for i in issues if (i.get("severity") or "").lower() == "warning"]
+          print(f"Lint issues: {len(issues)}; warnings: {len(warnings)}; errors/fatal: {len(errors)}")
+          if errors:
+              for issue in errors:
+                  print(f"{issue.get('severity')}: {issue.get('id')}: {issue.get('message')}")
+              raise SystemExit("Lint report contains Error/Fatal findings")
+          PY
+
+      - name: Verify APK manifests and AccessibilityService configuration
+        id: manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROD_APK="app/build/outputs/apk/debug/app-debug.apk"
+          TEST_APK="app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+          ANALYZER="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+
+          test -s "$PROD_APK"
+          test -s "$TEST_APK"
+          "$ANALYZER" manifest print "$PROD_APK" > verification-logs/production-manifest.xml
+          "$ANALYZER" manifest print "$TEST_APK" > verification-logs/instrumentation-manifest.xml
+
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          ANDROID = "{http://schemas.android.com/apk/res/android}"
+          production = ET.parse("verification-logs/production-manifest.xml").getroot()
+          test_manifest = ET.parse("verification-logs/instrumentation-manifest.xml").getroot()
+
+          app = production.find("application")
+          assert app is not None, "Production APK has no application element"
+          service = next(
+              (node for node in app.findall("service")
+               if (node.get(ANDROID + "name") or "").endswith("FruitBlastAccessibilityService")),
+              None,
+          )
+          assert service is not None, "AccessibilityService is missing from production APK"
+          assert service.get(ANDROID + "exported") == "true", "AccessibilityService exported must be true"
+          assert service.get(ANDROID + "permission") == "android.permission.BIND_ACCESSIBILITY_SERVICE"
+          actions = {
+              node.get(ANDROID + "name")
+              for intent in service.findall("intent-filter")
+              for node in intent.findall("action")
+          }
+          assert "android.accessibilityservice.AccessibilityService" in actions, "AccessibilityService intent action missing"
+          metadata = {
+              node.get(ANDROID + "name"): node.get(ANDROID + "resource")
+              for node in service.findall("meta-data")
+          }
+          assert metadata.get("android.accessibilityservice") == "@xml/fruit_blast_accessibility_service", "AccessibilityService metadata resource mismatch"
+
+          fixture_name = "com.fruitblast.app.automation.AccessibilityNodeFixtureActivity"
+          production_activities = [
+              node.get(ANDROID + "name")
+              for node in app.findall("activity")
+          ]
+          assert fixture_name not in production_activities, "Test fixture leaked into production APK"
+
+          test_app = test_manifest.find("application")
+          assert test_app is not None, "Instrumentation APK has no application element"
+          fixture = next(
+              (node for node in test_app.findall("activity")
+               if (node.get(ANDROID + "name") or "").endswith("AccessibilityNodeFixtureActivity")),
+              None,
+          )
+          assert fixture is not None, "AccessibilityNodeFixtureActivity missing from instrumentation APK"
+          assert fixture.get(ANDROID + "exported") == "false", "Instrumentation fixture must not be exported"
+          print("PASS: production service registration, permission, intent, metadata and fixture isolation")
+          PY
+
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          ANDROID = "{http://schemas.android.com/apk/res/android}"
+          root = ET.parse("app/src/main/res/xml/fruit_blast_accessibility_service.xml").getroot()
+          expected = {
+              "accessibilityEventTypes": "typeWindowStateChanged|typeWindowsChanged",
+              "accessibilityFeedbackType": "feedbackGeneric",
+              "canRetrieveWindowContent": "true",
+              "notificationTimeout": "100",
+          }
+          for key, value in expected.items():
+              actual = root.get(ANDROID + key)
+              assert actual == value, f"{key}: expected {value!r}, got {actual!r}"
+          print("PASS: source AccessibilityService XML configuration")
+          PY
+
+      - name: Create verification summary and checksums
+        if: always()
+        shell: bash
+        env:
+          POLICY_OUTCOME: ${{ steps.policy.outcome }}
+          PRODUCTION_OUTCOME: ${{ steps.production.outcome }}
+          INSTRUMENTATION_OUTCOME: ${{ steps.instrumentation.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          MANIFEST_OUTCOME: ${{ steps.manifests.outcome }}
+        run: |
+          mkdir -p verification-logs
+          {
+            echo "F06-C-2 Offline Android Verification"
+            echo "Repository: ${GITHUB_REPOSITORY}"
+            echo "Branch: ${GITHUB_REF_NAME}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo "Workflow run: ${GITHUB_RUN_ID}"
+            echo "Policy verification: ${POLICY_OUTCOME:-not_run}"
+            echo "Production APK: ${PRODUCTION_OUTCOME:-not_run}"
+            echo "Instrumentation APK compile: ${INSTRUMENTATION_OUTCOME:-not_run}"
+            echo "Lint: ${LINT_OUTCOME:-not_run}"
+            echo "Manifest/configuration assertions: ${MANIFEST_OUTCOME:-not_run}"
+            echo "Runtime instrumentation tests: NOT RUN (offline tier)"
+            echo "Emulator/device tests: NOT RUN"
+          } | tee verification-logs/verification-summary.txt
+
+          {
+            java -version 2>&1 | head -n 1 || true
+            ./gradlew --version 2>/dev/null | grep -m1 '^Gradle ' || true
+            echo "ANDROID_HOME=${ANDROID_HOME:-unset}"
+            echo "Android platform: android-37.0"
+          } > verification-logs/environment.txt
+
+          files=()
+          for file in app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk; do
+            if [ -s "$file" ]; then files+=("$file"); fi
+          done
+          if [ "${#files[@]}" -gt 0 ]; then
+            sha256sum "${files[@]}" > verification-logs/SHA256SUMS.txt
+          fi
+
+      - name: Upload offline verification artifacts
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: fb-a03-1-debug-apk
+          name: fb-a03-1-offline-android-verification
           path: |
             app/build/outputs/apk/debug/app-debug.apk
-            manifest.txt
-          if-no-files-found: error
+            app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+            verification-logs/
+          if-no-files-found: warn
+          retention-days: 14
