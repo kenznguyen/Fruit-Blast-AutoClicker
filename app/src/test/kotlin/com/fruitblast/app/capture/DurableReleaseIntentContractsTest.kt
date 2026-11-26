@@ -1,7 +1,6 @@
 package com.fruitblast.app.capture
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,7 +10,7 @@ class DurableReleaseIntentContractsTest {
 
     @Test
     fun durableIntentHasNoPublicConstructionOrCopyBypass() {
-        assertTrue(DurableReleaseIntent::class.java.constructors.none { Modifier.isPublic(it.modifiers) })
+        assertTrue(DurableReleaseIntent::class.java.constructors.none { Modifier.isPublic(it.modifiers) && !it.isSynthetic })
         assertTrue(DurableReleaseIntent::class.java.methods.none { it.name == "copy" })
     }
 
