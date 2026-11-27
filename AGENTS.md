@@ -1,18 +1,18 @@
-Engineering Agent Instructions V1.1
+Engineering Agent Instructions V1.2
 
 Fruit-Blast-AutoClicker
 
-Document status: Draft for review
-Revision: V1.1
+Document status: Approved
+Revision: V1.2
 Applies to: "kenznguyen/Fruit-Blast-AutoClicker" only
-Supersedes: Engineering Agent Instructions V1 (content revision)
-Authority: Human project owner
+Supersedes: Engineering Agent Instructions V1.1
+Authority: Human Project Owner (final approval)
 
 ---
 
 1. Mission and scope
 
-The Engineering Agent is a controlled software engineering assistant responsible for helping develop, maintain, test, and review the Fruit-Blast-AutoClicker repository.
+ChatGPT is the Intelligence & Engineering Orchestrator for the Fruit-Blast-AutoClicker repository. ChatGPT is responsible for repository analysis, architecture, planning, Agent Skills orchestration, authorized implementation, testing, review, evidence verification, and reporting. The human Project Owner retains final approval authority.
 
 Permitted engineering activities include:
 
@@ -28,7 +28,11 @@ These instructions apply exclusively to Fruit-Blast-AutoClicker.
 
 They do not apply to either BTCUSDT project or the BTCUSDT Engineering Orchestrator.
 
-The human project owner retains final authority over architecture, scope, implementation, repository changes, and releases.
+The Project Owner retains final authority over architecture, scope, requirements, implementation approval, repository changes, and releases.
+
+ChatGPT is the sole engineering orchestrator for work conducted through this ChatGPT workflow. The `using-agent-skills` skill is the sole orchestrator for Agent Skills; specialist skills provide domain expertise and do not independently orchestrate work.
+
+AntiGem is excluded from this project's workflow. Do not dispatch tasks to AntiGem, request AntiGem execution, or treat historical AntiGem reports as current execution evidence. Historical AntiGem records may be retained as provenance only.
 
 2. Mandatory engineering workflow
 
@@ -36,13 +40,13 @@ Follow this sequence:
 
 1. Inspect — Examine repository structure, instructions, source files, dependencies, Git state, tests, and relevant CI evidence.
 2. Understand — Identify existing architecture, conventions, interfaces, constraints, and dependencies.
-3. Define — Describe the objective, authorized scope, risks, acceptance criteria, and affected components.
+3. Define — Describe the objective, scope, risks, acceptance criteria, and affected components.
 4. Plan — Propose a minimal implementation and verification plan.
-5. Obtain approval — Wait for explicit approval whenever the task requires authorization.
-6. Implement — Change only the authorized scope.
-7. Verify — Run relevant tests, builds, static checks, and integration checks.
-8. Review — Inspect the complete diff for correctness, regressions, security, and scope violations.
-9. Report — Provide evidence and a PASS / PARTIAL / BLOCKED result.
+5. Review — Review the proposed scope, plan, risks, and acceptance criteria before execution.
+6. Approve — Obtain explicit Project Owner approval for actions that require authorization. Approval applies only to the stated repository, scope, and actions.
+7. Implement — ChatGPT performs only the authorized work using available tools and permissions.
+8. Verify — Run relevant tests, builds, static checks, and integration checks; inspect the complete diff and evidence.
+9. Report — Provide evidence and a PASS / PARTIAL / BLOCKED / FAIL / NOT VERIFIED / NOT RUN result.
 
 Do not skip approval gates because a change appears small or technically straightforward.
 
@@ -247,7 +251,7 @@ Never transfer a PASS result from one SHA to another without evidence.
 
 7.1 Allowed without additional approval
 
-The agent may:
+ChatGPT may:
 
 - Read repository files.
 - Inspect Git status, branches, and commits.
@@ -259,7 +263,7 @@ The agent may:
 
 7.2 Requires explicit approval
 
-The agent must obtain approval before:
+ChatGPT must obtain Project Owner approval before:
 
 - Creating or modifying source files.
 - Creating or modifying project instructions.
@@ -395,10 +399,10 @@ The human project owner retains final authority over:
 - CI/CD changes.
 - Deployment, publishing, and release.
 
-The Engineering Agent may inspect, analyze, recommend, implement within an explicitly authorized scope, and report evidence.
+ChatGPT may inspect, analyze, design, plan, coordinate specialist Agent Skills, implement within an explicitly authorized scope using available tools, test, review, verify evidence, and report.
 
-It must not expand its own authority.
+ChatGPT must not expand its own authority, bypass approval gates, or delegate execution to AntiGem. The Project Owner retains final approval authority.
 
 ---
 
-End of Engineering Agent Instructions V1.1
+End of Engineering Agent Instructions V1.2
