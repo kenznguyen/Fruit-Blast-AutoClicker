@@ -421,6 +421,9 @@ jobs:
               "elapsedTimeBudgetOverflowReturnsUnknownWithoutPartialClassification",
               "nullRootReturnsUnknown",
               "repeatedObservationsUseFreshFrameworkNodes",
+              "dispatcherClicksOnlyUniqueRevalidatedCloseNode",
+              "dispatcherRejectsAmbiguousCloseControls",
+              "dispatcherRejectsStaleOrWrongForegroundBeforeScanning",
           }
           missing = sorted(name for name in expected_methods if not re.search(r"\b" + re.escape(name) + r"\b", dex_dump))
           assert not missing, f"Compiled instrumentation test methods missing from test APK DEX: {missing}"

@@ -6,6 +6,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.fruitblast.automation.AdUiState
+import com.fruitblast.automation.AdAction
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -102,6 +103,62 @@ class AccessibilityNodeObserverInstrumentationTest {
         assertEquals(AdUiState.PLAYABLE_AD_CANDIDATE, second.state)
         assertTrue(first.closeVisible)
         assertTrue(second.closeVisible)
+    }
+
+
+    @Test
+    fun dispatcherClicksOnlyUniqueRevalidatedCloseNode() {
+        val dispatcher = AccessibilityNodeClickDispatcher(
+            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            rootProvider = ::freshRoot,
+            isTargetForegroundNow = { true },
+        )
+
+        assertTrue(dispatcher.dispatch(AdAction.CLOSE))
+        instrumentation.waitForIdleSync()
+        assertEquals(1, activity.closeClickCount)
+
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        instrumentation.waitForIdleSync()
+        assertEquals("Duplicate event must not dispatch the same control twice", 1, activity.closeClickCount)
+    }
+
+    @Test
+    fun dispatcherRejectsAmbiguousCloseControls() {
+        instrumentation.runOnMainSync { activity.addDuplicateCloseControl() }
+        instrumentation.waitForIdleSync()
+
+        val dispatcher = AccessibilityNodeClickDispatcher(
+            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            rootProvider = ::freshRoot,
+            isTargetForegroundNow = { true },
+        )
+
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        instrumentation.waitForIdleSync()
+        assertEquals(0, activity.closeClickCount)
+    }
+
+    @Test
+    fun dispatcherRejectsStaleOrWrongForegroundBeforeScanning() {
+        val dispatcher = AccessibilityNodeClickDispatcher(
+            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            rootProvider = ::freshRoot,
+            isTargetForegroundNow = { false },
+        )
+
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        instrumentation.waitForIdleSync()
+        assertEquals(0, activity.closeClickCount)
+    }
+
+    private fun freshRoot(): AccessibilityNodeInfo? {
+        var root: AccessibilityNodeInfo? = null
+        instrumentation.runOnMainSync {
+            root = activity.fixtureRoot.createAccessibilityNodeInfo()
+            root?.setQueryFromAppProcessEnabled(activity.fixtureRoot, true)
+        }
+        return root
     }
 
     private fun observe(

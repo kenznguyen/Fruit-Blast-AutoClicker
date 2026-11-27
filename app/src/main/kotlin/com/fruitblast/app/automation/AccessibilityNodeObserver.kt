@@ -8,9 +8,15 @@ import com.fruitblast.automation.AdUiObservation
 import com.fruitblast.automation.BoundedNodeTraversal
 import com.fruitblast.automation.NodeTraversalAccess
 
+internal data class AdUiScanResult(
+    val observation: AdUiObservation,
+    val snapshots: List<AccessibilityNodeSnapshot>,
+    val complete: Boolean,
+)
+
 /**
  * Bounded synchronous read-only scan. Platform nodes remain owned by this adapter and
- * are recycled by the traversal before any immutable snapshot reaches the classifier.
+ * are recycled by the traversal before immutable snapshots reach policy or dispatch.
  */
 internal class AccessibilityNodeObserver(
     private val maxNodes: Int = 256,
@@ -25,7 +31,10 @@ internal class AccessibilityNodeObserver(
         require(maxDurationNanos > 0)
     }
 
-    fun observeAndRelease(root: AccessibilityNodeInfo?): AdUiObservation {
+    fun observeAndRelease(root: AccessibilityNodeInfo?): AdUiObservation =
+        scanAndRelease(root).observation
+
+    fun scanAndRelease(root: AccessibilityNodeInfo?): AdUiScanResult {
         val access = object : NodeTraversalAccess<AccessibilityNodeInfo, AccessibilityNodeSnapshot> {
             override fun snapshot(node: AccessibilityNodeInfo): AccessibilityNodeSnapshot {
                 val bounds = Rect()
@@ -44,8 +53,10 @@ internal class AccessibilityNodeObserver(
                 )
             }
 
-            override fun snapshot(node: AccessibilityNodeInfo, path: List<Int>): AccessibilityNodeSnapshot =
-                snapshot(node).copy(nodePath = path)
+            override fun snapshot(
+                node: AccessibilityNodeInfo,
+                path: List<Int>,
+            ): AccessibilityNodeSnapshot = snapshot(node).copy(nodePath = path)
 
             override fun childCount(node: AccessibilityNodeInfo): Int = node.childCount
 
@@ -63,8 +74,14 @@ internal class AccessibilityNodeObserver(
             nowNanos = System::nanoTime,
             access = access,
         )
-        if (!result.complete) return AdUiObservation()
-        return classifier.classify(result.snapshots)
+        if (!result.complete) {
+            return AdUiScanResult(AdUiObservation(), emptyList(), complete = false)
+        }
+        return AdUiScanResult(
+            observation = classifier.classify(result.snapshots),
+            snapshots = result.snapshots,
+            complete = true,
+        )
     }
 
     private companion object {
