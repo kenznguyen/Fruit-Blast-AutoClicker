@@ -17,6 +17,13 @@ internal class AccessibilityNodeFixtureActivity : Activity() {
     lateinit var fixtureRoot: LinearLayout
         private set
 
+    var closeClickCount: Int = 0
+        private set
+
+    fun addDuplicateCloseControl() {
+        fixtureRoot.addView(FixtureCloseButton(this) { closeClickCount++ }, fixtureLayoutParams())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -50,7 +57,7 @@ internal class AccessibilityNodeFixtureActivity : Activity() {
             fixtureLayoutParams(),
         )
         fixtureRoot.addView(
-            FixtureCloseButton(this),
+            FixtureCloseButton(this) { closeClickCount++ },
             fixtureLayoutParams(),
         )
 
@@ -91,12 +98,13 @@ internal class AccessibilityNodeFixtureActivity : Activity() {
         }
     }
 
-    private class FixtureCloseButton(context: Activity) : Button(context) {
+    private class FixtureCloseButton(context: Activity, onClicked: () -> Unit) : Button(context) {
         init {
             text = "Close"
             isEnabled = true
             isClickable = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            setOnClickListener { onClicked() }
         }
 
         override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {

@@ -2,31 +2,40 @@ package com.fruitblast.app.capture
 
 import java.io.Closeable
 
-/**
- * Temporary access to a capture resource owned by the capture pipeline.
- *
- * Consumers must access the value only inside [useValue] and must not retain it.
- * Closing the lease prevents new readers and releases the resource exactly once
- * after any in-flight reader has returned.
- */
-class FrameLease<T : Any> internal constructor(
+data class FrameLeaseIdentity(
+    val sessionGeneration: Long,
+    val leaseId: Long,
+)
+
+interface FrameLease<T : Any> : Closeable {
+    val identity: FrameLeaseIdentity
+    val isClosed: Boolean
+    fun <R> useValue(block: (T) -> R): R
+
+    companion object {
+        operator fun <T : Any> invoke(value: T, onRelease: () -> Unit): FrameLease<T> =
+            FrameLeaseImpl(value, FrameLeaseIdentity(0L, 0L), onRelease)
+    }
+}
+
+internal class FrameLeaseImpl<T : Any>(
     private val value: T,
+    override val identity: FrameLeaseIdentity,
     private val onRelease: () -> Unit,
-) : Closeable {
+) : FrameLease<T> {
     private val lock = Any()
     private var closed = false
     private var activeReaders = 0
     private var releaseClaimed = false
 
-    val isClosed: Boolean
+    override val isClosed: Boolean
         get() = synchronized(lock) { closed }
 
-    fun <R> useValue(block: (T) -> R): R {
+    override fun <R> useValue(block: (T) -> R): R {
         synchronized(lock) {
             check(!closed) { "Frame lease is closed" }
             activeReaders += 1
         }
-
         try {
             return block(value)
         } finally {
@@ -36,9 +45,7 @@ class FrameLease<T : Any> internal constructor(
 
     override fun close() {
         val shouldRelease = synchronized(lock) {
-            if (closed) {
-                false
-            } else {
+            if (closed) false else {
                 closed = true
                 claimReleaseIfReady()
             }

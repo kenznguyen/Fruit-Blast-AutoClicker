@@ -32,7 +32,7 @@ enum class AdAction {
  * 1. Unknown foreground -> WAIT.
  * 2. Wrong foreground app -> RECOVER_WRONG_APP.
  * 3. Completion or game home -> STOP.
- * 4. While an ad is playing -> WAIT (never emit an input action).
+ * 4. A positively identified skip control may be selected while an ad is playing.
  * 5. Close, then Next, then Continue.
  * 6. Otherwise WAIT.
  */
@@ -50,10 +50,6 @@ class AdDecisionPolicy(
 
         if (observation.gameHomeVisible || observation.adCompleted) {
             return AdAction.STOP
-        }
-
-        if (observation.adPlaying) {
-            return AdAction.WAIT
         }
 
         return when {
