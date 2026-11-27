@@ -318,11 +318,12 @@ jobs:
 
           actual_events = compiled.get(ANDROID + "accessibilityEventTypes")
           assert actual_events is not None, "Compiled accessibilityEventTypes missing"
-          expected_events = 0x20 | 0x400000
+          expected_events = 0x20 | 0x800 | 0x400000
           parsed_events = parse_flags(
               actual_events,
               {
                   "typeWindowStateChanged": 0x20,
+                  "typeWindowContentChanged": 0x800,
                   "typeWindowsChanged": 0x400000,
               },
               "accessibilityEventTypes",
@@ -463,6 +464,7 @@ jobs:
           interrupt_body = method_body(r"override\s+fun\s+onInterrupt\s*\(\s*\)", "onInterrupt")
           destroy_body = method_body(r"override\s+fun\s+onDestroy\s*\(\s*\)", "onDestroy")
 
+          assert "AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED" in event_body, "F02: service must process in-window content changes"
           assert "lastWindowEventPackage = null" in interrupt_body, "F02: onInterrupt must invalidate cached event package"
           assert "lastWindowEventPackage = null" in destroy_body, "F02: onDestroy must invalidate cached event package"
           assert re.search(r"\bsuper\.onDestroy\s*\(\s*\)", destroy_body), "F02: onDestroy must call super.onDestroy()"
