@@ -12,6 +12,7 @@ data class AccessibilityNodeSnapshot(
     val clickable: Boolean,
     val boundsWidth: Int,
     val boundsHeight: Int,
+    val nodePath: List<Int> = emptyList(),
 )
 
 enum class AdUiState {

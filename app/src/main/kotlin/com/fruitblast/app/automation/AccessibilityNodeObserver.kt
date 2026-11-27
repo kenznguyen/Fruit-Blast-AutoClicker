@@ -44,6 +44,9 @@ internal class AccessibilityNodeObserver(
                 )
             }
 
+            override fun snapshot(node: AccessibilityNodeInfo, path: List<Int>): AccessibilityNodeSnapshot =
+                snapshot(node).copy(nodePath = path)
+
             override fun childCount(node: AccessibilityNodeInfo): Int = node.childCount
 
             override fun childAt(node: AccessibilityNodeInfo, index: Int): AccessibilityNodeInfo? =

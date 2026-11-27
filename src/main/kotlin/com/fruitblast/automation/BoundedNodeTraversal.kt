@@ -5,6 +5,7 @@ import java.util.ArrayDeque
 /** Adapter that keeps platform node ownership behind the traversal boundary. */
 interface NodeTraversalAccess<N, S> {
     fun snapshot(node: N): S
+    fun snapshot(node: N, path: List<Int>): S = snapshot(node)
     fun childCount(node: N): Int
     fun childAt(node: N, index: Int): N?
     fun recycle(node: N)
@@ -33,12 +34,12 @@ object BoundedNodeTraversal {
         require(maxDurationNanos > 0)
         if (root == null) return BoundedNodeTraversalResult(emptyList(), complete = true)
 
-        val pending = ArrayDeque<Pair<N, Int>>()
+        val pending = ArrayDeque<Triple<N, Int, List<Int>>>()
         val snapshots = ArrayList<S>(minOf(maxNodes, 64))
         val startedAt = nowNanos()
         var discoveredNodes = 1
         var complete = true
-        pending.addLast(root to 0)
+        pending.addLast(Triple(root, 0, emptyList()))
 
         fun timeBudgetExceeded(): Boolean = nowNanos() - startedAt >= maxDurationNanos
 
@@ -49,13 +50,13 @@ object BoundedNodeTraversal {
                     break
                 }
 
-                val (node, depth) = pending.removeFirst()
+                val (node, depth, path) = pending.removeFirst()
                 try {
                     if (timeBudgetExceeded()) {
                         complete = false
                         break
                     }
-                    snapshots += access.snapshot(node)
+                    snapshots += access.snapshot(node, path)
                     if (timeBudgetExceeded()) {
                         complete = false
                         break
@@ -88,7 +89,7 @@ object BoundedNodeTraversal {
                                 break
                             }
                             discoveredNodes++
-                            pending.addLast(child to (depth + 1))
+                            pending.addLast(Triple(child, depth + 1, path + index))
                         }
                     }
                     if (!complete) break
