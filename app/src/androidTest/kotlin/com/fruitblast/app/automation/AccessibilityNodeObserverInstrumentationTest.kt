@@ -108,22 +108,23 @@ class AccessibilityNodeObserverInstrumentationTest {
 
     @Test
     fun dispatcherClicksOnlyUniqueRevalidatedCloseNode() {
+        val observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L)
         val dispatcher = AccessibilityNodeClickDispatcher(
-            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            observer = observer,
             rootProvider = ::freshRoot,
             isTargetForegroundNow = { true },
         )
 
-        assertTrue(dispatcher.dispatch(AdAction.CLOSE))
+        assertTrue(dispatcher.dispatch(AdAction.CLOSE, observer.scanAndRelease(freshRoot())))
         instrumentation.waitForIdleSync()
         assertEquals(1, activity.closeClickCount)
 
-        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE, observer.scanAndRelease(freshRoot())))
         instrumentation.waitForIdleSync()
         assertEquals("Duplicate event must not dispatch the same control twice", 1, activity.closeClickCount)
 
         dispatcher.resetAfterCorrelatedRedirect()
-        assertTrue(dispatcher.dispatch(AdAction.CLOSE))
+        assertTrue(dispatcher.dispatch(AdAction.CLOSE, observer.scanAndRelease(freshRoot())))
         instrumentation.waitForIdleSync()
         assertEquals("A correlated redirect must permit one fresh retry after return", 2, activity.closeClickCount)
     }
@@ -133,26 +134,28 @@ class AccessibilityNodeObserverInstrumentationTest {
         instrumentation.runOnMainSync { activity.addDuplicateCloseControl() }
         instrumentation.waitForIdleSync()
 
+        val observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L)
         val dispatcher = AccessibilityNodeClickDispatcher(
-            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            observer = observer,
             rootProvider = ::freshRoot,
             isTargetForegroundNow = { true },
         )
 
-        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE, observer.scanAndRelease(freshRoot())))
         instrumentation.waitForIdleSync()
         assertEquals(0, activity.closeClickCount)
     }
 
     @Test
     fun dispatcherRejectsStaleOrWrongForegroundBeforeScanning() {
+        val observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L)
         val dispatcher = AccessibilityNodeClickDispatcher(
-            observer = AccessibilityNodeObserver(maxDurationNanos = 1_000_000_000L),
+            observer = observer,
             rootProvider = ::freshRoot,
             isTargetForegroundNow = { false },
         )
 
-        assertFalse(dispatcher.dispatch(AdAction.CLOSE))
+        assertFalse(dispatcher.dispatch(AdAction.CLOSE, observer.scanAndRelease(freshRoot())))
         instrumentation.waitForIdleSync()
         assertEquals(0, activity.closeClickCount)
     }

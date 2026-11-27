@@ -88,7 +88,7 @@ class FruitBlastAccessibilityService : AccessibilityService() {
                 )
                 val dispatched = if (!redirectCircuitBreaker.observeOnly) {
                     when (action) {
-                        AdAction.CLOSE, AdAction.NEXT, AdAction.CONTINUE -> clickDispatcher.dispatch(action)
+                        AdAction.CLOSE, AdAction.NEXT, AdAction.CONTINUE -> clickDispatcher.dispatch(action, scan)
                         else -> false
                     }
                 } else false

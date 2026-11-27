@@ -508,6 +508,8 @@ jobs:
               "two_redirect_breaker": "AdRedirectCircuitBreaker()" in service and "redirectCircuitBreaker.observeOnly" in service,
               "retry_after_correlated_redirect": "clickDispatcher.resetAfterCorrelatedRedirect()" in service,
               "stable_action_deduplication": "lastDispatchedAction" in dispatcher,
+              "reuse_initial_bounded_scan": "clickDispatcher.dispatch(action, scan)" in service,
+              "single_fresh_revalidation_scan": "observer.scanAndRelease(rootProvider())" in dispatcher,
               "bounded_content_event_rate": "MIN_EVENT_SCAN_INTERVAL_MILLIS = 100L" in service,
               "launch_intent": "getLaunchIntentForPackage" in service,
               "new_task_only": "Intent.FLAG_ACTIVITY_NEW_TASK" in service,

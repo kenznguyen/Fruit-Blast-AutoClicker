@@ -29,12 +29,10 @@ internal class AccessibilityNodeClickDispatcher(
         lastDispatchedAction = null
     }
 
-    fun dispatch(action: AdAction): Boolean {
-        if (!isTargetForegroundNow()) return false
+    fun dispatch(action: AdAction, initialScan: AdUiScanResult): Boolean {
+        if (!initialScan.complete || !isTargetForegroundNow()) return false
 
-        val firstScan = observer.scanAndRelease(rootProvider())
-        if (!firstScan.complete) return false
-        val first = AdControlCandidateSelector.select(firstScan.snapshots, action)
+        val first = AdControlCandidateSelector.select(initialScan.snapshots, action)
         val candidate = (first as? AdControlSelection.Unique)?.candidate ?: return false
         if (action == lastDispatchedAction) return false
 
