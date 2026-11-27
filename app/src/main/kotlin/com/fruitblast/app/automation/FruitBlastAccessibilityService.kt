@@ -11,15 +11,15 @@ import com.fruitblast.automation.AdDecisionPolicy
 import com.fruitblast.automation.AdObservation
 import com.fruitblast.automation.AdUiState
 import com.fruitblast.automation.ExternalAppRecoveryAction
-import com.fruitblast.automation.ExternalAppRecoveryPolicy
 import com.fruitblast.automation.AdRedirectCircuitBreaker
+import com.fruitblast.automation.ExternalAppTransitionCorrelator
 import com.fruitblast.automation.ForegroundAppValidator
 import com.fruitblast.automation.ForegroundStatus
 import com.fruitblast.automation.FruitBlastConfig
 
 /**
  * Accessibility adapter for bounded ad observation and policy-gated skip dispatch.
- * Every click is resolved from fresh trees; event package data is diagnostic only.
+ * Every click is resolved from fresh trees; external package events only correlate a pending click.
  */
 class FruitBlastAccessibilityService : AccessibilityService() {
     private val foregroundValidator = ForegroundAppValidator()
@@ -27,7 +27,7 @@ class FruitBlastAccessibilityService : AccessibilityService() {
     private val decisionPolicy = AdDecisionPolicy()
     private val redirectCircuitBreaker = AdRedirectCircuitBreaker()
     private val externalDestinationClassifier by lazy { ExternalDestinationClassifier(packageManager) }
-    private var pendingAutomationClickAtMillis: Long? = null
+    private val externalTransitionCorrelator = ExternalAppTransitionCorrelator()
     private var awaitingReturnObservation = false
     private val clickDispatcher by lazy {
         AccessibilityNodeClickDispatcher(
@@ -54,7 +54,6 @@ class FruitBlastAccessibilityService : AccessibilityService() {
                 }
                 val reobservingReturn = awaitingReturnObservation
                 if (reobservingReturn) {
-                    awaitingReturnObservation = false
                     Log.i(TAG, "Fruit Blast foreground restored; reobserving fresh Accessibility tree")
                 }
 
@@ -64,14 +63,19 @@ class FruitBlastAccessibilityService : AccessibilityService() {
 
                 val scan = nodeObserver.scanAndRelease(rootInActiveWindow)
                 val observation = scan.observation
+                val activePackage = activeRootPackageNow()
+                if (reobservingReturn && scan.complete && activePackage == FruitBlastConfig.TARGET_PACKAGE) {
+                    awaitingReturnObservation = false
+                    Log.i(TAG, "Fresh target Accessibility tree reacquired after external-app return")
+                }
                 if (observation.state == AdUiState.GAME_HOME_CANDIDATE) {
                     clickDispatcher.resetForConfirmedGameHome()
                     redirectCircuitBreaker.onConfirmedGameHome()
-                    pendingAutomationClickAtMillis = null
+                    externalTransitionCorrelator.clear()
                     awaitingReturnObservation = false
+                    lastScanAtMillis = 0L
                 }
 
-                val activePackage = activeRootPackageNow()
                 val action = decisionPolicy.decide(
                     AdObservation(
                         foregroundPackage = activePackage,
@@ -88,7 +92,7 @@ class FruitBlastAccessibilityService : AccessibilityService() {
                         else -> false
                     }
                 } else false
-                if (dispatched) pendingAutomationClickAtMillis = SystemClock.elapsedRealtime()
+                if (dispatched) externalTransitionCorrelator.recordAutomationClick(SystemClock.elapsedRealtime())
 
                 Log.i(
                     TAG,
@@ -102,25 +106,17 @@ class FruitBlastAccessibilityService : AccessibilityService() {
     }
 
     private fun handleExternalAppTransition(packageName: String?) {
-        val clickAt = pendingAutomationClickAtMillis ?: return
         val now = SystemClock.elapsedRealtime()
         val kind = externalDestinationClassifier.classify(packageName)
-        val decision = ExternalAppRecoveryPolicy.decide(
+        val decision = externalTransitionCorrelator.consumeExternalTransition(
             kind = kind,
-            automationClickAtMillis = clickAt,
             nowMillis = now,
             redirectsInAdSession = redirectCircuitBreaker.redirectCount,
-            clickPending = true,
         )
-        if (decision.action == ExternalAppRecoveryAction.IGNORE) {
-            if (now < clickAt || now - clickAt > ExternalAppRecoveryPolicy.CORRELATION_WINDOW_MILLIS) {
-                pendingAutomationClickAtMillis = null
-            }
-            return
-        }
+        if (decision.action == ExternalAppRecoveryAction.IGNORE) return
 
-        // Consume the token before recovery so duplicate window events cannot retry it.
-        pendingAutomationClickAtMillis = null
+        // The correlator consumes the click token for every first external transition,
+        // including unknown destinations; duplicate events cannot reuse it.
         val observeOnly = redirectCircuitBreaker.recordCorrelatedRedirect()
         clickDispatcher.resetAfterCorrelatedRedirect()
         awaitingReturnObservation = true
@@ -173,7 +169,7 @@ class FruitBlastAccessibilityService : AccessibilityService() {
         lastWindowEventPackage = null
         lastScanAtMillis = 0L
         clickDispatcher.resetForConfirmedGameHome()
-        pendingAutomationClickAtMillis = null
+        externalTransitionCorrelator.clear()
         awaitingReturnObservation = false
     }
 
@@ -181,13 +177,13 @@ class FruitBlastAccessibilityService : AccessibilityService() {
         lastWindowEventPackage = null
         lastScanAtMillis = 0L
         clickDispatcher.resetForConfirmedGameHome()
-        pendingAutomationClickAtMillis = null
+        externalTransitionCorrelator.clear()
         awaitingReturnObservation = false
         super.onDestroy()
     }
 
     private companion object {
         const val TAG = "FruitBlastA11y"
-        const val MIN_EVENT_SCAN_INTERVAL_MILLIS = 150L
+        const val MIN_EVENT_SCAN_INTERVAL_MILLIS = 100L
     }
 }

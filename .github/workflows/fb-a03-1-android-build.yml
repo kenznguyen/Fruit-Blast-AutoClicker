@@ -499,14 +499,20 @@ jobs:
           classifier = Path("app/src/main/kotlin/com/fruitblast/app/automation/ExternalDestinationClassifier.kt").read_text()
           manifest = Path("app/src/main/AndroidManifest.xml").read_text()
           policy = Path("src/main/kotlin/com/fruitblast/automation/ExternalAppRecoveryPolicy.kt").read_text()
+          correlator = Path("src/main/kotlin/com/fruitblast/automation/ExternalAppTransitionCorrelator.kt").read_text()
+          dispatcher = Path("app/src/main/kotlin/com/fruitblast/app/automation/AccessibilityNodeClickDispatcher.kt").read_text()
           checks = {
               "correlation_policy": "ExternalAppRecoveryPolicy.decide" in service,
-              "single_use_click_token": "pendingAutomationClickAtMillis = null" in service,
+              "single_use_click_token": "ExternalAppTransitionCorrelator" in service and "consumeExternalTransition" in service,
+              "consume_unknown_transition": "pendingClickAtMillis = null" in correlator,
               "two_redirect_breaker": "AdRedirectCircuitBreaker()" in service and "redirectCircuitBreaker.observeOnly" in service,
               "retry_after_correlated_redirect": "clickDispatcher.resetAfterCorrelatedRedirect()" in service,
+              "stable_action_deduplication": "lastDispatchedAction" in dispatcher,
+              "bounded_content_event_rate": "MIN_EVENT_SCAN_INTERVAL_MILLIS = 100L" in service,
               "launch_intent": "getLaunchIntentForPackage" in service,
               "new_task_only": "Intent.FLAG_ACTIVITY_NEW_TASK" in service,
               "fresh_reobserve": "scanAndRelease(rootInActiveWindow)" in service and "awaitingReturnObservation" in service,
+              "reobserve_until_complete_target_tree": "reobservingReturn && scan.complete && activePackage == FruitBlastConfig.TARGET_PACKAGE" in service,
               "dynamic_browser_detection": "queryIntentActivities" in classifier and "Intent.CATEGORY_BROWSABLE" in classifier,
               "play_store_visibility": 'android:name="com.android.vending"' in manifest,
               "https_visibility": 'android:scheme="https"' in manifest,

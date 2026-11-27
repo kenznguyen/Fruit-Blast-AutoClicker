@@ -18,15 +18,15 @@ internal class AccessibilityNodeClickDispatcher(
     private val rootProvider: () -> AccessibilityNodeInfo?,
     private val isTargetForegroundNow: () -> Boolean,
 ) {
-    private var lastDispatched: AdControlCandidate? = null
+    private var lastDispatchedAction: AdAction? = null
 
     fun resetForConfirmedGameHome() {
-        lastDispatched = null
+        lastDispatchedAction = null
     }
 
     /** Allows the same ad control to be retried after a correlated external redirect. */
     fun resetAfterCorrelatedRedirect() {
-        lastDispatched = null
+        lastDispatchedAction = null
     }
 
     fun dispatch(action: AdAction): Boolean {
@@ -36,7 +36,7 @@ internal class AccessibilityNodeClickDispatcher(
         if (!firstScan.complete) return false
         val first = AdControlCandidateSelector.select(firstScan.snapshots, action)
         val candidate = (first as? AdControlSelection.Unique)?.candidate ?: return false
-        if (candidate == lastDispatched) return false
+        if (action == lastDispatchedAction) return false
 
         val secondScan = observer.scanAndRelease(rootProvider())
         if (!secondScan.complete) return false
@@ -75,7 +75,7 @@ internal class AccessibilityNodeClickDispatcher(
             if (!isTargetForegroundNow()) return false
 
             val dispatched = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            if (dispatched) lastDispatched = candidate
+            if (dispatched) lastDispatchedAction = action
             return dispatched
         } catch (_: RuntimeException) {
             return false
