@@ -162,6 +162,7 @@ fun main() {
     runBoundedNodeTraversalTests()
     runAdControlCandidateSelectorTests()
     runExternalAppRecoveryPolicyTests()
+    runExternalAppTransitionCorrelatorTests()
 
     runAdUiFixtureTests()
 
