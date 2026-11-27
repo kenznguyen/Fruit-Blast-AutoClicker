@@ -160,6 +160,7 @@ fun main() {
     }
 
     runBoundedNodeTraversalTests()
+    runAdControlCandidateSelectorTests()
 
     runAdUiFixtureTests()
 
