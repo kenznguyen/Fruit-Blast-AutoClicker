@@ -234,7 +234,7 @@ jobs:
           ANDROID = "{http://schemas.android.com/apk/res/android}"
           root = ET.parse("app/src/main/res/xml/fruit_blast_accessibility_service.xml").getroot()
           expected = {
-              "accessibilityEventTypes": "typeWindowStateChanged|typeWindowsChanged",
+              "accessibilityEventTypes": "typeWindowStateChanged|typeWindowsChanged|typeWindowContentChanged",
               "accessibilityFeedbackType": "feedbackGeneric",
               "canRetrieveWindowContent": "true",
               "notificationTimeout": "100",
