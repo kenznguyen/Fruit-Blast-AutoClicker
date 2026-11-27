@@ -1,6 +1,7 @@
 package com.fruitblast.app.automation
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -9,6 +10,9 @@ import com.fruitblast.automation.AdAction
 import com.fruitblast.automation.AdDecisionPolicy
 import com.fruitblast.automation.AdObservation
 import com.fruitblast.automation.AdUiState
+import com.fruitblast.automation.ExternalAppRecoveryAction
+import com.fruitblast.automation.ExternalAppRecoveryPolicy
+import com.fruitblast.automation.AdRedirectCircuitBreaker
 import com.fruitblast.automation.ForegroundAppValidator
 import com.fruitblast.automation.ForegroundStatus
 import com.fruitblast.automation.FruitBlastConfig
@@ -21,6 +25,10 @@ class FruitBlastAccessibilityService : AccessibilityService() {
     private val foregroundValidator = ForegroundAppValidator()
     private val nodeObserver = AccessibilityNodeObserver()
     private val decisionPolicy = AdDecisionPolicy()
+    private val redirectCircuitBreaker = AdRedirectCircuitBreaker()
+    private val externalDestinationClassifier by lazy { ExternalDestinationClassifier(packageManager) }
+    private var pendingAutomationClickAtMillis: Long? = null
+    private var awaitingReturnObservation = false
     private val clickDispatcher by lazy {
         AccessibilityNodeClickDispatcher(
             observer = nodeObserver,
@@ -40,16 +48,27 @@ class FruitBlastAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 val eventPackage = event.packageName?.toString()
                 lastWindowEventPackage = eventPackage
-                if (eventPackage != FruitBlastConfig.TARGET_PACKAGE) return
+                if (eventPackage != FruitBlastConfig.TARGET_PACKAGE) {
+                    handleExternalAppTransition(eventPackage)
+                    return
+                }
+                val reobservingReturn = awaitingReturnObservation
+                if (reobservingReturn) {
+                    awaitingReturnObservation = false
+                    Log.i(TAG, "Fruit Blast foreground restored; reobserving fresh Accessibility tree")
+                }
 
                 val now = SystemClock.elapsedRealtime()
-                if (now - lastScanAtMillis < MIN_EVENT_SCAN_INTERVAL_MILLIS) return
+                if (!reobservingReturn && now - lastScanAtMillis < MIN_EVENT_SCAN_INTERVAL_MILLIS) return
                 lastScanAtMillis = now
 
                 val scan = nodeObserver.scanAndRelease(rootInActiveWindow)
                 val observation = scan.observation
                 if (observation.state == AdUiState.GAME_HOME_CANDIDATE) {
                     clickDispatcher.resetForConfirmedGameHome()
+                    redirectCircuitBreaker.onConfirmedGameHome()
+                    pendingAutomationClickAtMillis = null
+                    awaitingReturnObservation = false
                 }
 
                 val activePackage = activeRootPackageNow()
@@ -63,19 +82,63 @@ class FruitBlastAccessibilityService : AccessibilityService() {
                         gameHomeVisible = observation.state == AdUiState.GAME_HOME_CANDIDATE,
                     ),
                 )
-                val dispatched = when (action) {
-                    AdAction.CLOSE, AdAction.NEXT, AdAction.CONTINUE ->
-                        clickDispatcher.dispatch(action)
-                    else -> false
-                }
+                val dispatched = if (!redirectCircuitBreaker.observeOnly) {
+                    when (action) {
+                        AdAction.CLOSE, AdAction.NEXT, AdAction.CONTINUE -> clickDispatcher.dispatch(action)
+                        else -> false
+                    }
+                } else false
+                if (dispatched) pendingAutomationClickAtMillis = SystemClock.elapsedRealtime()
 
                 Log.i(
                     TAG,
                     "eventType=${event.eventType}, eventPackage=$eventPackage, " +
                         "activePackage=$activePackage, uiState=${observation.state}, " +
-                        "action=$action, dispatched=$dispatched, complete=${scan.complete}",
+                        "action=$action, dispatched=$dispatched, observeOnly=${redirectCircuitBreaker.observeOnly}, " +
+                        "redirects=${redirectCircuitBreaker.redirectCount}, complete=${scan.complete}",
                 )
             }
+        }
+    }
+
+    private fun handleExternalAppTransition(packageName: String?) {
+        val clickAt = pendingAutomationClickAtMillis ?: return
+        val now = SystemClock.elapsedRealtime()
+        val kind = externalDestinationClassifier.classify(packageName)
+        val decision = ExternalAppRecoveryPolicy.decide(
+            kind = kind,
+            automationClickAtMillis = clickAt,
+            nowMillis = now,
+            redirectsInAdSession = redirectCircuitBreaker.redirectCount,
+            clickPending = true,
+        )
+        if (decision.action == ExternalAppRecoveryAction.IGNORE) {
+            if (now < clickAt || now - clickAt > ExternalAppRecoveryPolicy.CORRELATION_WINDOW_MILLIS) {
+                pendingAutomationClickAtMillis = null
+            }
+            return
+        }
+
+        // Consume the token before recovery so duplicate window events cannot retry it.
+        pendingAutomationClickAtMillis = null
+        val observeOnly = redirectCircuitBreaker.recordCorrelatedRedirect()
+        awaitingReturnObservation = true
+        val launchIntent = packageManager.getLaunchIntentForPackage(FruitBlastConfig.TARGET_PACKAGE)
+        if (launchIntent == null) {
+            awaitingReturnObservation = false
+            Log.w(TAG, "Correlated external redirect but Fruit Blast launch intent is unavailable")
+            return
+        }
+
+        // Let Android resolve the existing task; never force-stop or clear application state.
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(launchIntent)
+            Log.i(TAG, "Recovered correlated ${kind.name} transition; redirects=${redirectCircuitBreaker.redirectCount}, " +
+                "observeOnly=$observeOnly; waiting for fresh target-window observation")
+        } catch (error: RuntimeException) {
+            awaitingReturnObservation = false
+            Log.w(TAG, "Unable to return to Fruit Blast after correlated external transition", error)
         }
     }
 
@@ -109,12 +172,16 @@ class FruitBlastAccessibilityService : AccessibilityService() {
         lastWindowEventPackage = null
         lastScanAtMillis = 0L
         clickDispatcher.resetForConfirmedGameHome()
+        pendingAutomationClickAtMillis = null
+        awaitingReturnObservation = false
     }
 
     override fun onDestroy() {
         lastWindowEventPackage = null
         lastScanAtMillis = 0L
         clickDispatcher.resetForConfirmedGameHome()
+        pendingAutomationClickAtMillis = null
+        awaitingReturnObservation = false
         super.onDestroy()
     }
 

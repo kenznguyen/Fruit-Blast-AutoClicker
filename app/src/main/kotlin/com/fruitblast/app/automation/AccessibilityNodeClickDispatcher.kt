@@ -45,10 +45,9 @@ internal class AccessibilityNodeClickDispatcher(
             for (index in candidate.nodePath) {
                 val parent = current ?: return false
                 val child = parent.getChild(index)
-                current = null
+                current = child
                 parent.recycle()
                 if (child == null) return false
-                current = child
             }
 
             val target = current ?: return false

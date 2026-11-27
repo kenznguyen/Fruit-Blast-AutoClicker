@@ -488,6 +488,36 @@ jobs:
           print("BOUNDARY: static source assertions only; Android lifecycle callbacks were not invoked")
           PY
 
+      - name: Verify F03 correlated external-app recovery contract
+        id: offline_f03
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          service = Path("app/src/main/kotlin/com/fruitblast/app/automation/FruitBlastAccessibilityService.kt").read_text()
+          classifier = Path("app/src/main/kotlin/com/fruitblast/app/automation/ExternalDestinationClassifier.kt").read_text()
+          manifest = Path("app/src/main/AndroidManifest.xml").read_text()
+          policy = Path("src/main/kotlin/com/fruitblast/automation/ExternalAppRecoveryPolicy.kt").read_text()
+          checks = {
+              "correlation_policy": "ExternalAppRecoveryPolicy.decide" in service,
+              "single_use_click_token": "pendingAutomationClickAtMillis = null" in service,
+              "two_redirect_breaker": "AdRedirectCircuitBreaker()" in service and "redirectCircuitBreaker.observeOnly" in service,
+              "launch_intent": "getLaunchIntentForPackage" in service,
+              "new_task_only": "Intent.FLAG_ACTIVITY_NEW_TASK" in service,
+              "fresh_reobserve": "scanAndRelease(rootInActiveWindow)" in service and "awaitingReturnObservation" in service,
+              "dynamic_browser_detection": "queryIntentActivities" in classifier and "Intent.CATEGORY_BROWSABLE" in classifier,
+              "play_store_visibility": 'android:name="com.android.vending"' in manifest,
+              "https_visibility": 'android:scheme="https"' in manifest,
+              "bounded_window": "CORRELATION_WINDOW_MILLIS: Long = 3_000L" in policy,
+          }
+          forbidden = ["FLAG_ACTIVITY_CLEAR_TASK", "forceStopPackage", "clearApplicationUserData"]
+          assert all(checks.values()), f"F03 missing: {[name for name, ok in checks.items() if not ok]}"
+          assert not any(token in service for token in forbidden), "F03 must not force-stop or clear app/task state"
+          Path("verification-logs/f03-recovery-contract.txt").write_text("PASS: F03 static recovery contract\nBOUNDARY: no runtime recovery execution\n")
+          print("PASS: F03 correlated external recovery, dynamic browser discovery and task-safe return contract")
+          PY
+
       - name: Verify F06 lint warning allowlist and emit triage report
         id: offline_f06
         shell: bash
@@ -592,6 +622,7 @@ jobs:
           OFFLINE_P0_OUTCOME: ${{ steps.offline_p0.outcome }}
           OFFLINE_F01_OUTCOME: ${{ steps.offline_f01.outcome }}
           OFFLINE_F02_OUTCOME: ${{ steps.offline_f02.outcome }}
+          OFFLINE_F03_OUTCOME: ${{ steps.offline_f03.outcome }}
           OFFLINE_F06_OUTCOME: ${{ steps.offline_f06.outcome }}
         run: |
           mkdir -p verification-logs
@@ -610,6 +641,7 @@ jobs:
             echo "Offline P0 APK identity/compiled XML/integrity assertions: ${OFFLINE_P0_OUTCOME:-not_run}"
             echo "F01 instrumentation test class/method compilation assertions: ${OFFLINE_F01_OUTCOME:-not_run} (execution NOT RUN)"
             echo "F02 AccessibilityService lifecycle source assertions: ${OFFLINE_F02_OUTCOME:-not_run} (static only)"
+            echo "F03 correlated external-app recovery contract: ${OFFLINE_F03_OUTCOME:-not_run} (static only; runtime NOT RUN)"
             echo "F06 lint warning allowlist/triage assertions: ${OFFLINE_F06_OUTCOME:-not_run} (warnings remain OPEN)"
             echo "F03 Binder/recovery runtime: NOT RUN (separate scope)"
             echo "Runtime instrumentation tests: NOT RUN (offline tier)"
