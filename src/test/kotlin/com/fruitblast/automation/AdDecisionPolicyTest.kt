@@ -31,15 +31,15 @@ fun main() {
     check(decision(close = true) == AdAction.CLOSE) { "Close must be selected when available." }
     check(decision(next = true) == AdAction.NEXT) { "Next must be selected when close is unavailable." }
     check(decision(continueAd = true) == AdAction.CONTINUE) { "Continue must be selected for a paused ad." }
-    check(decision(playing = true) == AdAction.WAIT) { "An active ad must not receive an input action." }
-    check(decision(close = true, playing = true) == AdAction.WAIT) {
-        "A visible Close control must not be selected while the ad is playing."
+    check(decision(playing = true) == AdAction.WAIT) { "An active ad without a validated skip control must wait." }
+    check(decision(close = true, playing = true) == AdAction.CLOSE) {
+        "A validated Close control may be selected while the ad is playing."
     }
-    check(decision(next = true, playing = true) == AdAction.WAIT) {
-        "A visible Next control must not be selected while the ad is playing."
+    check(decision(next = true, playing = true) == AdAction.NEXT) {
+        "A validated Next control may be selected while the ad is playing."
     }
-    check(decision(continueAd = true, playing = true) == AdAction.WAIT) {
-        "A visible Continue control must not be selected while the ad is playing."
+    check(decision(continueAd = true, playing = true) == AdAction.CONTINUE) {
+        "A validated Continue control may be selected while the ad is playing."
     }
     check(decision(playing = true, completed = true) == AdAction.STOP) {
         "Completion must retain STOP precedence while the ad-playing flag is set."
