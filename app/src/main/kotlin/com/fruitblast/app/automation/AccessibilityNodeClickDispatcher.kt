@@ -24,6 +24,11 @@ internal class AccessibilityNodeClickDispatcher(
         lastDispatched = null
     }
 
+    /** Allows the same ad control to be retried after a correlated external redirect. */
+    fun resetAfterCorrelatedRedirect() {
+        lastDispatched = null
+    }
+
     fun dispatch(action: AdAction): Boolean {
         if (!isTargetForegroundNow()) return false
 

@@ -503,6 +503,7 @@ jobs:
               "correlation_policy": "ExternalAppRecoveryPolicy.decide" in service,
               "single_use_click_token": "pendingAutomationClickAtMillis = null" in service,
               "two_redirect_breaker": "AdRedirectCircuitBreaker()" in service and "redirectCircuitBreaker.observeOnly" in service,
+              "retry_after_correlated_redirect": "clickDispatcher.resetAfterCorrelatedRedirect()" in service,
               "launch_intent": "getLaunchIntentForPackage" in service,
               "new_task_only": "Intent.FLAG_ACTIVITY_NEW_TASK" in service,
               "fresh_reobserve": "scanAndRelease(rootInActiveWindow)" in service and "awaitingReturnObservation" in service,

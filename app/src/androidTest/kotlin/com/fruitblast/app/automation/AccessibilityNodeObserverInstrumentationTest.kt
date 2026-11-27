@@ -121,6 +121,11 @@ class AccessibilityNodeObserverInstrumentationTest {
         assertFalse(dispatcher.dispatch(AdAction.CLOSE))
         instrumentation.waitForIdleSync()
         assertEquals("Duplicate event must not dispatch the same control twice", 1, activity.closeClickCount)
+
+        dispatcher.resetAfterCorrelatedRedirect()
+        assertTrue(dispatcher.dispatch(AdAction.CLOSE))
+        instrumentation.waitForIdleSync()
+        assertEquals("A correlated redirect must permit one fresh retry after return", 2, activity.closeClickCount)
     }
 
     @Test

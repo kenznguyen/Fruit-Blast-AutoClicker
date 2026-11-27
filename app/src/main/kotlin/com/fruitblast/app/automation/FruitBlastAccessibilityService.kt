@@ -122,6 +122,7 @@ class FruitBlastAccessibilityService : AccessibilityService() {
         // Consume the token before recovery so duplicate window events cannot retry it.
         pendingAutomationClickAtMillis = null
         val observeOnly = redirectCircuitBreaker.recordCorrelatedRedirect()
+        clickDispatcher.resetAfterCorrelatedRedirect()
         awaitingReturnObservation = true
         val launchIntent = packageManager.getLaunchIntentForPackage(FruitBlastConfig.TARGET_PACKAGE)
         if (launchIntent == null) {
