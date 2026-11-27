@@ -1,6 +1,11 @@
 name: FB-A04.6 Android Emulator Instrumentation
 
 on:
+  push:
+    branches:
+      - feat/f08-b2-r4-capture-frame-pool
+    paths:
+      - .github/workflows/fb-a04-6-android-emulator.yml
   workflow_dispatch:
     inputs:
       target_sha:
@@ -25,7 +30,7 @@ jobs:
       - name: Validate target SHA
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "::error::target_sha must be a full 40-character lowercase commit SHA"
@@ -35,13 +40,13 @@ jobs:
       - name: Checkout exact target commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_sha }}
+          ref: ${{ inputs.target_sha || github.sha }}
           fetch-depth: 1
 
       - name: Confirm checked out commit
         shell: bash
         env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+          TARGET_SHA: ${{ inputs.target_sha || github.sha }}
         run: |
           ACTUAL_SHA="$(git rev-parse HEAD)"
           echo "Requested: $TARGET_SHA"
@@ -251,7 +256,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fb-a04-6-android-emulator-${{ inputs.target_sha }}
+          name: fb-a04-6-android-emulator-${{ inputs.target_sha || github.sha }}
           path: |
             app/build/reports/androidTests/connected/
             app/build/outputs/androidTest-results/connected/
